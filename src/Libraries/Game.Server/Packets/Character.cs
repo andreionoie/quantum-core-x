@@ -1,6 +1,7 @@
 ﻿#nullable enable
 
 using QuantumCore.API;
+using QuantumCore.Game.Constants;
 using QuantumCore.Networking;
 
 namespace QuantumCore.Game.Packets

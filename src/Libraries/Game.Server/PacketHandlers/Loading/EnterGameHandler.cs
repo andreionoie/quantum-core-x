@@ -1,11 +1,13 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using QuantumCore.API;
 using QuantumCore.API.Game.Types;
 using QuantumCore.API.Game.World;
 using QuantumCore.API.PluginTypes;
+using QuantumCore.API.Systems.Affects;
 using QuantumCore.Caching;
 using QuantumCore.Extensions;
 using QuantumCore.Game.Packets;
+using QuantumCore.Game.Persistence.Entities;
 
 namespace QuantumCore.Game.PacketHandlers.Loading
 {
@@ -32,6 +34,12 @@ namespace QuantumCore.Game.PacketHandlers.Loading
                 return;
             }
 
+            player.Affects.Upsert(EntityAffect.InvisibleRespawn5Sec);
+            if (player.Groups.Contains(PermGroup.OperatorGroup))
+            {
+                player.Affects.Upsert(EntityAffect.GameMasterHaloEffect);
+            }
+
             // Enable game phase
             ctx.Connection.SetPhase(EPhases.Game);
 
@@ -43,9 +51,6 @@ namespace QuantumCore.Game.PacketHandlers.Loading
 
             player.ShowEntity(ctx.Connection);
             _world.SpawnEntity(player);
-
-            player.SendInventory();
-            player.Skills.Send();
         }
     }
 }

@@ -1,10 +1,11 @@
 using QuantumCore.API.Core.Models;
 using QuantumCore.API.Game.Skills;
 using QuantumCore.API.Game.Types;
+using QuantumCore.API.Systems.Mobility;
 
 namespace QuantumCore.API.Game.World
 {
-    public interface IPlayerEntity : IEntity
+    public interface IPlayerEntity : IEntity, IAffectable
     {
         long Mana { get; set; }
         string Name { get; }
@@ -15,6 +16,7 @@ namespace QuantumCore.API.Game.World
         IList<Guid> Groups { get; }
         IShop? Shop { get; set; }
         IQuickSlotBar QuickSlotBar { get; }
+        IMobilityController Mobility { get; }
         IPlayerSkills Skills { get; }
         IQuest? CurrentQuest { get; set; }
         Dictionary<string, IQuest> Quests { get; }
@@ -27,8 +29,8 @@ namespace QuantumCore.API.Game.World
         void Respawn(bool town);
         uint CalculateAttackDamage(uint baseDamage);
         uint GetHitRate();
-        void AddPoint(EPoints point, int value);
-        void SetPoint(EPoints point, uint value);
+        void AddPoint(EPoint point, int value);
+        void SetPoint(EPoint point, uint value);
         void DropItem(ItemInstance item, byte count);
         void Pickup(IGroundItem groundItem);
         void DropGold(uint amount);
@@ -51,6 +53,8 @@ namespace QuantumCore.API.Game.World
         void SendChatInfo(string message);
         void SendTarget();
         void Disconnect();
+        bool CancelCountdownEvent();
+        void SetCountdownEventCancellable(long eventId);
         string ToString();
         Task OnDespawnAsync();
         Task CalculatePlayedTimeAsync();
@@ -61,5 +65,7 @@ namespace QuantumCore.API.Game.World
         bool IsUsableSkillMotion(int motion);
         Task RefreshGuildAsync();
         void RecalculateStatusPoints();
+
+        long MsSinceLastAttacked();
     }
 }

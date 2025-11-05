@@ -5,6 +5,7 @@ using Microsoft.Extensions.FileProviders.Physical;
 using NSubstitute;
 using QuantumCore.API;
 using QuantumCore.API.Core.Models;
+using QuantumCore.API.Game.Types.Items;
 using QuantumCore.Game;
 using QuantumCore.Game.Extensions;
 using QuantumCore.Game.PlayerUtils;
@@ -57,7 +58,7 @@ public class ItemProtoTests
             Size = 2,
             Sockets = [0, 0, 0],
             Specular = 0,
-            Subtype = (byte)EWeaponType.Sword,
+            Subtype = (byte)EWeaponSubtype.Sword,
             Type = (byte)EItemType.Weapon,
             Unknown = 0,
             Unknown2 = 0,

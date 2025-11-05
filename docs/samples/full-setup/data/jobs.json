@@ -12,7 +12,9 @@
             "hp_per_ht": 40,
             "sp_per_iq": 20,
             "hp_per_level": 36,
-            "sp_per_level": 44
+            "sp_per_level": 44,
+            "max_stamina": 800,
+            "stamina_per_ht": 5
         },
         {
             "id": 1,
@@ -26,7 +28,9 @@
             "hp_per_ht": 40,
             "sp_per_iq": 20,
             "hp_per_level": 36,
-            "sp_per_level": 44
+            "sp_per_level": 44,
+            "max_stamina": 800,
+            "stamina_per_ht": 5
         },
         {
             "id": 2,
@@ -40,7 +44,9 @@
             "hp_per_ht": 40,
             "sp_per_iq": 20,
             "hp_per_level": 36,
-            "sp_per_level": 44
+            "sp_per_level": 44,
+            "max_stamina": 800,
+            "stamina_per_ht": 5
         },
         {
             "id": 3,
@@ -54,7 +60,9 @@
             "hp_per_ht": 40,
             "sp_per_iq": 20,
             "hp_per_level": 36,
-            "sp_per_level": 44
+            "sp_per_level": 44,
+            "max_stamina": 800,
+            "stamina_per_ht": 5
         }
     ]
 }

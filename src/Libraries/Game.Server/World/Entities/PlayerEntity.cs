@@ -7,17 +7,26 @@ using QuantumCore.API.Extensions;
 using QuantumCore.API.Game.Guild;
 using QuantumCore.API.Game.Skills;
 using QuantumCore.API.Game.Types;
+using QuantumCore.API.Game.Types.Combat;
+using QuantumCore.API.Game.Types.Items;
+using QuantumCore.API.Game.Types.Skills;
 using QuantumCore.API.Game.World;
+using QuantumCore.API.Systems.Affects;
+using QuantumCore.API.Systems.Mobility;
+using QuantumCore.API.Systems.Stats;
+using QuantumCore.API.Systems.Tickers;
 using QuantumCore.Caching;
+using QuantumCore.Core.Event;
 using QuantumCore.Extensions;
+using QuantumCore.Game.Constants;
 using QuantumCore.Game.Extensions;
 using QuantumCore.Game.Packets;
 using QuantumCore.Game.Packets.Guild;
 using QuantumCore.Game.Persistence;
 using QuantumCore.Game.PlayerUtils;
 using QuantumCore.Game.Skills;
-using QuantumCore.Game.World;
-using QuantumCore.Game.Services;
+using QuantumCore.Game.Systems.Mobility;
+using QuantumCore.Game.Systems.Tickers;
 
 namespace QuantumCore.Game.World.Entities
 {
@@ -33,9 +42,13 @@ namespace QuantumCore.Game.World.Entities
         public IList<Guid> Groups { get; private set; }
         public IShop? Shop { get; set; }
         public IQuickSlotBar QuickSlotBar { get; }
+        public IMobilityController Mobility { get; private set; }
         public IPlayerSkills Skills { get; private set; }
+        public IAffectsController Affects { get; }
         public IQuest? CurrentQuest { get; set; }
-        public Dictionary<string, IQuest> Quests { get; } = new();
+        public Dictionary<string, IQuest> Quests { get; } = [];
+
+        public string AllStatModifiers => _stats.ToString() ?? string.Empty;
 
         public override byte HealthPercentage
         {
@@ -44,6 +57,9 @@ namespace QuantumCore.Game.World.Entities
                 return 100; // todo
             }
         }
+
+        public long MsSinceLastAttacked() => _lastAttackAt.HasValue ? 
+            GameServer.Instance.ServerTime - _lastAttackAt.Value : int.MaxValue;
 
         public EAntiFlags AntiFlagClass
         {
@@ -81,14 +97,20 @@ namespace QuantumCore.Game.World.Entities
             }
         }
 
-        private uint _defence;
+        private int _persistTime;
 
-        private const int PersistInterval = 30 * 1000; // 30s
-        private int _persistTime = 0;
-        private const int HealthRegenInterval = 3 * 1000;
-        private const int ManaRegenInterval = 3 * 1000;
-        private double _healthRegenTime = HealthRegenInterval;
-        private double _manaRegenTime = ManaRegenInterval;
+        private readonly GatedTickerEngine<IPlayerEntity> _hpPassiveRestoreTicker;
+        private readonly GatedTickerEngine<IPlayerEntity> _spPassiveRestoreTicker;
+        private readonly GatedTickerEngine<IPlayerEntity> _staminaFullRestoreTicker;
+        private readonly GatedTickerEngine<IPlayerEntity> _hpRecoveryTicker;
+        private readonly GatedTickerEngine<IPlayerEntity> _spRecoveryTicker;
+        private readonly GatedTickerEngine<IPlayerEntity> _staminaConsumptionTicker;
+
+        private readonly GatedTickerEngine<IPlayerEntity> _affectsTicker;
+        private readonly SuraBmFlameSpiritTicker _flameSpiritHitTicker;
+        private readonly GatedTickerEngine<IPlayerEntity> _poisonTicker;
+        private readonly GatedTickerEngine<IPlayerEntity> _fireTicker;
+
         private readonly IItemManager _itemManager;
         private readonly IJobManager _jobManager;
         private readonly IExperienceManager _experienceManager;
@@ -98,6 +120,16 @@ namespace QuantumCore.Game.World.Entities
         private readonly ILogger<PlayerEntity> _logger;
         private readonly IServiceScope _scope;
         private readonly IItemRepository _itemRepository;
+        private readonly IStatEngine _stats;
+
+        private long? _lastAttackAt;
+        private long? _diedAtMs;
+        
+        // Runtime-only recovery buckets (not persisted)
+        private uint _hpRecoveryBucket;
+        private uint _spRecoveryBucket;
+        
+        private long? _countdownEventId;        // the event for logout or phase_select
 
         public PlayerEntity(PlayerData player, IGameConnection connection, IItemManager itemManager,
             IJobManager jobManager,
@@ -132,48 +164,63 @@ namespace QuantumCore.Game.World.Entities
             EntityClass = (uint)player.PlayerClass;
 
             Groups = new List<Guid>();
+
+            // init the computed stat engine (allows stacking various modifiers and easily removing them)
+            _stats = new StatEngine(ScalingFormulas.BasePointsForPlayer(this, jobManager));
+            ScalingFormulas.RegisterDependenciesForPlayer(_stats, player.PlayerClass.GetClass());
+            // clamp HP/SP whenever MaxHp/MaxSp decreases to lower than the current HP/SP
+            _stats[EPoint.MaxHp].OnChanged += _ => Health = Math.Clamp(Health, 0, (int)GetPoint(EPoint.MaxHp));
+            _stats[EPoint.MaxSp].OnChanged += _ => Mana = Math.Clamp(Mana, 0, (int)GetPoint(EPoint.MaxSp));
+
+            // init the affects engine
+            Affects = new AffectsController();
+            Affects.AffectAdded += OnAffectAdded;      // send affect add/remove packets and recompute stats
+            Affects.AffectRemoved += OnAffectRemoved;
+            
+            // init the hp/sp/stamina/affects periodic tickers
+            _hpPassiveRestoreTicker = new PlayerHpPassiveRestoreTicker(this);
+            _hpRecoveryTicker = new PlayerHpRecoveryTicker(this);
+            
+            _spPassiveRestoreTicker = new PlayerSpPassiveRestoreTicker(this);
+            _spRecoveryTicker = new PlayerSpRecoveryTicker(this);
+            
+            _staminaFullRestoreTicker = new PlayerStaminaFullRestoreTicker(this);
+            _staminaConsumptionTicker = new PlayerStaminaConsumptionTicker(this);
+            Mobility = new PlayerMobilityController();
+            Mobility.ActiveModeChanged += OnMobilityModeChanged; // send walking animation packet on zero stamina
+            
+            _affectsTicker = new AffectsTicker<IPlayerEntity>(this, TryConsumeSpCost);
+            _flameSpiritHitTicker = new SuraBmFlameSpiritTicker(this);
+            _poisonTicker = new PoisonDamageOverTimeTicker<IPlayerEntity>(this);
+            _fireTicker = new FireDamageOverTimeTicker<IPlayerEntity>(this);
         }
 
-        private static uint GetMaxSp(IJobManager jobManager, EPlayerClassGendered playerClass, byte level, uint point)
+        private bool TryConsumeSpCost(uint spCost)
         {
-            var info = jobManager.Get(playerClass);
-            if (info == null)
+            if (spCost > GetPoint(EPoint.Sp))
             {
-                return 0;
+                return false;
             }
 
-            return info.StartSp + info.SpPerIq * point + info.SpPerLevel * level;
-        }
-
-        private static uint GetMaxHp(IJobManager jobManager, EPlayerClassGendered playerClass, byte level, uint point)
-        {
-            var info = jobManager.Get(playerClass);
-            if (info == null)
-            {
-                return 0;
-            }
-
-            return info.StartHp + info.HpPerHt * point + info.HpPerLevel * level;
+            AddPoint(EPoint.Sp, -(int)spCost);
+            return true;
         }
 
         public async Task Load()
         {
+            Health = Math.Clamp(Player.Health, 0, GetPoint(EPoint.MaxHp));
+            Mana = Math.Clamp(Player.Mana, 0, GetPoint(EPoint.MaxSp));
+            // todo: try parallelize DB loading?
             await Inventory.Load();
+            SyncEquipmentModifiers();
             await QuickSlotBar.Load();
-            Player.MaxHp = GetMaxHp(_jobManager, Player.PlayerClass, Player.Level, Player.Ht);
-            Player.MaxSp = GetMaxSp(_jobManager, Player.PlayerClass, Player.Level, Player.Iq);
-            Health = (int)GetPoint(EPoints.MaxHp); // todo: cache hp of player
-            Mana = (int)GetPoint(EPoints.MaxSp);
             await LoadPermGroups();
             await Skills.LoadAsync();
+            // TODO: load affects from DB
             var guildManager = _scope.ServiceProvider.GetRequiredService<IGuildManager>();
             Guild = await guildManager.GetGuildForPlayerAsync(Player.Id);
             Player.GuildId = Guild?.Id;
             _questManager.InitializePlayer(this);
-
-            CalculateDefence();
-            CalculateMovement();
-            CalculateAttackSpeed();
         }
 
         public async Task ReloadPermissions()
@@ -255,61 +302,8 @@ namespace QuantumCore.Game.World.Entities
             Stop();
         }
 
-        private void CalculateDefence()
-        {
-            _defence = GetPoint(EPoints.Level) + (uint)Math.Floor(0.8 * GetPoint(EPoints.Ht));
-
-            foreach (var slot in Enum.GetValues<EquipmentSlots>())
-            {
-                var item = Inventory.EquipmentWindow.GetItem(slot);
-                if (item == null) continue;
-                var proto = _itemManager.GetItem(item.ItemId);
-                if (proto is null || !proto.IsType(EItemType.Armor)) continue;
-
-                _defence += (uint)proto.Values[1] + (uint)proto.Values[5] * 2;
-            }
-
-            _logger.LogDebug("Calculate defence value for {Name}, result: {Defence}", Name, _defence);
-
-            // todo add defence bonus from quests
-        }
-
-        private void CalculateMovement()
-        {
-            MovementSpeed = PlayerConstants.DEFAULT_MOVEMENT_SPEED;
-            float modifier = 0;
-            foreach (var slot in Enum.GetValues<EquipmentSlots>())
-            {
-                var item = Inventory.EquipmentWindow.GetItem(slot);
-                if (item == null) continue;
-                var proto = _itemManager.GetItem(item.ItemId);
-                if (proto is null || !proto.IsType(EItemType.Armor)) continue;
-
-                modifier += proto.GetApplyValue(EApplyType.MovSpeed);
-            }
-
-            var calculatedSpeed = MovementSpeed * (1 + modifier / 100);
-
-            MovementSpeed = (byte)Math.Min(calculatedSpeed, byte.MaxValue);
-            _logger.LogDebug("Calculate Movement value for {Name}, result: {MovementSpeed}", Name, MovementSpeed);
-        }
-
-        private void CalculateAttackSpeed()
-        {
-            AttackSpeed = PlayerConstants.DEFAULT_ATTACK_SPEED;
-            float modifier = 0;
-            foreach (var slot in Enum.GetValues<EquipmentSlots>())
-            {
-                var item = Inventory.EquipmentWindow.GetItem(slot);
-                if (item == null) continue;
-                var proto = _itemManager.GetItem(item.ItemId);
-                if (proto == null) continue;
-
-                modifier += proto.GetApplyValue(EApplyType.AttackSpeed);
-            }
-
-            AttackSpeed = (byte)Math.Min(AttackSpeed * (1 + modifier / 100), byte.MaxValue);
-        }
+        protected override AnimationType GetMovementAnimationType()
+            => Mobility.IsCurrentlyWalking ? AnimationType.Walk : AnimationType.Run;
 
         public override void Die()
         {
@@ -319,6 +313,8 @@ namespace QuantumCore.Game.World.Entities
             }
 
             base.Die();
+
+            Affects.Clear();
 
             var dead = new CharacterDead {Vid = Vid};
             foreach (var entity in NearbyEntities)
@@ -330,6 +326,7 @@ namespace QuantumCore.Game.World.Entities
             }
 
             Connection.Send(dead);
+            _diedAtMs = GameServer.Instance.ServerTime;
         }
 
         private void SendGuildInfo()
@@ -380,7 +377,8 @@ namespace QuantumCore.Game.World.Entities
                 }
             }
 
-            // todo spawn with invisible affect
+            Affects.Upsert(EntityAffect.InvisibleRespawn5Sec);
+            _diedAtMs = null;
 
             SendChatCommand("CloseRestartWindow");
             Connection.SetPhase(EPhases.Game);
@@ -409,7 +407,7 @@ namespace QuantumCore.Game.World.Entities
         {
             var shouldHavePoints = (uint)((Player.Level - 1) * 3);
             var steps = (byte)Math.Floor(
-                GetPoint(EPoints.Experience) / (double)GetPoint(EPoints.NeededExperience) * 4);
+                GetPoint(EPoint.Experience) / (double)GetPoint(EPoint.NeededExperience) * 4);
             shouldHavePoints += steps;
 
             if (shouldHavePoints <= Player.GivenStatusPoints)
@@ -433,12 +431,12 @@ namespace QuantumCore.Game.World.Entities
 
         private bool CheckLevelUp()
         {
-            var exp = GetPoint(EPoints.Experience);
-            var needed = GetPoint(EPoints.NeededExperience);
+            var exp = GetPoint(EPoint.Experience);
+            var needed = GetPoint(EPoint.NeededExperience);
 
             if (needed > 0 && exp >= needed)
             {
-                SetPoint(EPoints.Experience, exp - needed);
+                SetPoint(EPoint.Experience, exp - needed);
                 LevelUp();
 
                 if (!CheckLevelUp())
@@ -455,15 +453,18 @@ namespace QuantumCore.Game.World.Entities
 
         private void LevelUp(int level = 1)
         {
-            if (Player.Level + level > _experienceManager.MaxLevel)
+            // if experience table is not loaded (MaxLevel == 0), treat as uncapped for debug/admin commands
+            var maxLevel = _experienceManager.MaxLevel == 0 ? byte.MaxValue : _experienceManager.MaxLevel;
+            if (level == 0 || Player.Level + level > maxLevel)
             {
                 return;
             }
 
-            AddPoint(EPoints.Skill, level);
-            AddPoint(EPoints.SubSkill, level < 10 ? 0 : level - Math.Max((int)Player.Level, 9));
+            AddPoint(EPoint.Skill, level);
+            AddPoint(EPoint.SubSkill, level < 10 ? 0 : level - Math.Max((int)Player.Level, 9));
 
             Player.Level = (byte)(Player.Level + level);
+            _stats.NotifyBaseChanged(EPoint.Level);
 
             // todo: animation (I think this actually is a quest sent by the server on character login and not an actual packet at this stage)
 
@@ -483,9 +484,9 @@ namespace QuantumCore.Game.World.Entities
 
             if (attackStatus is null) return 0;
 
-            var levelBonus = GetPoint(EPoints.Level) * 2;
+            var levelBonus = GetPoint(EPoint.Level) * 2;
             var statusBonus = (
-                4 * GetPoint(EPoints.St) +
+                4 * GetPoint(EPoint.St) +
                 2 * GetPoint(attackStatus.Value)
             ) / 3;
             var weaponDamage = baseDamage * 2;
@@ -493,52 +494,56 @@ namespace QuantumCore.Game.World.Entities
             return levelBonus + (statusBonus + weaponDamage) * GetHitRate() / 100;
         }
 
-        public uint GetHitRate()
-        {
-            var b = (GetPoint(EPoints.Dx) * 4 + GetPoint(EPoints.Level) * 2) / 6;
-            return 100 * ((b > 90 ? 90 : b) + 210) / 300;
-        }
+        public uint GetHitRate() => GetPoint(EPoint.HitRate);
 
         public override void Update(double elapsedTime)
         {
             if (Map == null) return; // We don't have a map yet so we aren't spawned
 
-            base.Update(elapsedTime);
-
-            var maxHp = GetPoint(EPoints.MaxHp);
-            if (Health < maxHp && !Dead)
+            // auto respawn if the dead timeout elapsed
+            if (Dead && _diedAtMs.HasValue)
             {
-                _healthRegenTime -= elapsedTime;
-                if (_healthRegenTime <= 0)
+                var now = GameServer.Instance.ServerTime;
+                var deadline = _diedAtMs.Value + SchedulingConstants.PlayerAutoRespawnDelaySeconds * 1000L;
+                if (now >= deadline)
                 {
-                    var factor = State == EEntityState.Idle ? 0.05 : 0.01;
-                    Health = Math.Min((int)maxHp, Health + 15 + (int)(maxHp * factor));
-                    SendPoints();
-
-                    _healthRegenTime += HealthRegenInterval;
+                    Respawn(true);
                 }
             }
 
-            var maxSp = GetPoint(EPoints.MaxSp);
-            if (Mana < maxSp && !Dead)
-            {
-                _manaRegenTime -= elapsedTime;
-                if (_manaRegenTime <= 0)
-                {
-                    var factor = State == EEntityState.Idle ? 0.05 : 0.01;
-                    Mana = Math.Min((int)maxSp, Mana + 15 + (int)(maxSp * factor));
-                    SendPoints();
+            base.Update(elapsedTime);
 
-                    _manaRegenTime += ManaRegenInterval;
-                }
+            // we could implement some wrapper to step through all tickers, but writing them all explicitly here I think is more readable
+            var pointsChanged = false;
+            var elapsed = TimeSpan.FromMilliseconds(elapsedTime);
+            pointsChanged |= _hpPassiveRestoreTicker.Step(elapsed);
+            pointsChanged |= _hpRecoveryTicker.Step(elapsed);
+            pointsChanged |= _spPassiveRestoreTicker.Step(elapsed);
+            pointsChanged |= _spRecoveryTicker.Step(elapsed);
+            pointsChanged |= _staminaFullRestoreTicker.Step(elapsed);
+            pointsChanged |= _staminaConsumptionTicker.Step(elapsed);
+            pointsChanged |= _affectsTicker.Step(elapsed);
+            pointsChanged |= _flameSpiritHitTicker.Step(elapsed);
+            pointsChanged |= _poisonTicker.Step(elapsed);
+            pointsChanged |= _fireTicker.Step(elapsed);
+            if (pointsChanged)
+            {
+                SendPoints();
             }
 
             _persistTime += (int)elapsedTime;
-            if (_persistTime > PersistInterval)
+            if (_persistTime > SchedulingConstants.PersistInterval)
             {
                 Persist().Wait(); // TODO
-                _persistTime -= PersistInterval;
+                _persistTime -= SchedulingConstants.PersistInterval;
             }
+        }
+
+        internal void MarkAttackedNow()
+        {
+            _lastAttackAt = GameServer.Instance.ServerTime;
+            Affects.RemoveAllOfType(AffectType.From(EAffectType.InvisibleRespawn));
+            Affects.RemoveAllOfType(AffectType.FromSkill(ESkill.Stealth));
         }
 
         public override EBattleType GetBattleType()
@@ -552,7 +557,7 @@ namespace QuantumCore.Game.World.Entities
             if (weapon == null) return 0;
             var item = _itemManager.GetItem(weapon.ItemId);
             if (item == null) return 0;
-            return item.Values[3];
+            return item.GetMinWeaponBaseDamage();
         }
 
         public override int GetMaxDamage()
@@ -561,7 +566,7 @@ namespace QuantumCore.Game.World.Entities
             if (weapon == null) return 0;
             var item = _itemManager.GetItem(weapon.ItemId);
             if (item == null) return 0;
-            return item.Values[4];
+            return item.GetMaxWeaponBaseDamage();
         }
 
         public override int GetBonusDamage()
@@ -570,10 +575,10 @@ namespace QuantumCore.Game.World.Entities
             if (weapon == null) return 0;
             var item = _itemManager.GetItem(weapon.ItemId);
             if (item == null) return 0;
-            return item.Values[5];
+            return item.GetAdditionalWeaponDamage();
         }
 
-        public override void AddPoint(EPoints point, int value)
+        public override void AddPoint(EPoint point, int value)
         {
             if (value == 0)
             {
@@ -582,11 +587,11 @@ namespace QuantumCore.Game.World.Entities
 
             switch (point)
             {
-                case EPoints.Level:
+                case EPoint.Level:
                     LevelUp(value);
                     break;
-                case EPoints.Experience:
-                    if (_experienceManager.GetNeededExperience((byte)GetPoint(EPoints.Level)) == 0)
+                case EPoint.Experience:
+                    if (_experienceManager.GetNeededExperience((byte)GetPoint(EPoint.Level)) == 0)
                     {
                         // we cannot add experience if no level up is possible
                         return;
@@ -604,12 +609,12 @@ namespace QuantumCore.Game.World.Entities
 
                     if (value > 0)
                     {
-                        var partialLevelUps = CalcPartialLevelUps(before, GetPoint(EPoints.Experience),
-                            GetPoint(EPoints.NeededExperience));
+                        var partialLevelUps = CalcPartialLevelUps(before, GetPoint(EPoint.Experience),
+                            GetPoint(EPoint.NeededExperience));
                         if (partialLevelUps > 0)
                         {
-                            Health = Player.MaxHp;
-                            Mana = Player.MaxSp;
+                            Health = GetPoint(EPoint.MaxHp);
+                            Mana = GetPoint(EPoint.MaxSp);
                             for (var i = 0; i < partialLevelUps; i++)
                             {
                                 RecalculateStatusPoints();
@@ -620,61 +625,66 @@ namespace QuantumCore.Game.World.Entities
                     }
 
                     break;
-                case EPoints.Gold:
+                case EPoint.Gold:
                     var gold = Player.Gold + value;
                     Player.Gold = (uint)Math.Min(uint.MaxValue, Math.Max(0, gold));
                     break;
-                case EPoints.St:
-                    Player.St += (byte)value;
+                case EPoint.St:
+                    Player.St = (byte)Math.Clamp(Player.St + value, 0, byte.MaxValue);
+                    _stats.NotifyBaseChanged(EPoint.St);
                     break;
-                case EPoints.Dx:
-                    Player.Dx += (byte)value;
+                case EPoint.Dx:
+                    Player.Dx = (byte)Math.Clamp(Player.Dx + value, 0, byte.MaxValue);
+                    _stats.NotifyBaseChanged(EPoint.Dx);
                     break;
-                case EPoints.Ht:
-                    Player.Ht += (byte)value;
+                case EPoint.Ht:
+                    Player.Ht = (byte)Math.Clamp(Player.Ht + value, 0, byte.MaxValue);
+                    _stats.NotifyBaseChanged(EPoint.Ht);
                     break;
-                case EPoints.Iq:
-                    Player.Iq += (byte)value;
+                case EPoint.Iq:
+                    Player.Iq = (byte)Math.Clamp(Player.Iq + value, 0, byte.MaxValue);
+                    _stats.NotifyBaseChanged(EPoint.Iq);
                     break;
-                case EPoints.Hp:
-                    if (value <= 0)
-                    {
-                        // 0 gets ignored by client
-                        // Setting the Hp to 0 does not register as killing the player
-                    }
-                    else if (value > GetPoint(EPoints.MaxHp))
-                    {
-                        Health = GetPoint(EPoints.MaxHp);
-                    }
-                    else
-                    {
-                        Health = value;
-                    }
+                case EPoint.Hp:
+                    Health = Math.Clamp(Health + value, 0, GetPoint(EPoint.MaxHp));
+                    break;
+                case EPoint.Sp:
+                    Mana = Math.Clamp(Mana + value, 0, GetPoint(EPoint.MaxSp));
+                    break;
+                case EPoint.Stamina:
+                    var oldStamina = Player.Stamina;
+                    Player.Stamina = Math.Clamp(Player.Stamina + value, 0, GetPoint(EPoint.MaxStamina));
 
-                    break;
-                case EPoints.Sp:
-                    if (value <= 0)
+                    if (oldStamina == 0 && Player.Stamina > 0 && Mobility.IsForcedToWalk)
                     {
-                        // 0 gets ignored by client
+                        Mobility.ClearForceWalk(GameServer.Instance.ServerTime);
                     }
-                    else if (value > GetPoint(EPoints.MaxSp))
+                    else if (oldStamina > 0 && Player.Stamina == 0)
                     {
-                        Mana = GetPoint(EPoints.MaxSp);
+                        Mobility.ForceWalk(GameServer.Instance.ServerTime);
                     }
-                    else
-                    {
-                        Mana = value;
-                    }
-
                     break;
-                case EPoints.StatusPoints:
-                    Player.AvailableStatusPoints += (uint)value;
+                case EPoint.StatusPoints:
+                    // Debug.Assert(value > 0);
+                    Player.AvailableStatusPoints = (uint)Math.Max(0, Player.AvailableStatusPoints + value);
                     break;
-                case EPoints.Skill:
-                    Player.AvailableSkillPoints += (uint)value;
+                case EPoint.Skill:
+                    // Debug.Assert(value > 0);
+                    Player.AvailableSkillPoints = (uint)Math.Max(0, Player.AvailableSkillPoints + value);
                     break;
-                case EPoints.PlayTime:
-                    Player.PlayTime += (uint)value;
+                case EPoint.SubSkill:
+                    // Debug.Assert(value > 0);
+                    Player.AvailableSkillPoints = (uint)Math.Max(0, Player.AvailableSkillPoints + value);
+                    break;
+                case EPoint.PlayTime:
+                    // Debug.Assert(value > 0);
+                    Player.PlayTime = (ulong)Math.Max(0, (long)Player.PlayTime + value);
+                    break;
+                case EPoint.HpRecovery:
+                    _hpRecoveryBucket = (uint)Math.Max(0, _hpRecoveryBucket + value);
+                    break;
+                case EPoint.SpRecovery:
+                    _spRecoveryBucket = (uint)Math.Max(0, _spRecoveryBucket + value);
                     break;
                 default:
                     _logger.LogError("Failed to add point to {Point}, unsupported", point);
@@ -694,26 +704,65 @@ namespace QuantumCore.Game.World.Entities
             return afterChunk - beforeChunk;
         }
 
-        public override void SetPoint(EPoints point, uint value)
+        public override void SetPoint(EPoint point, uint value)
         {
             switch (point)
             {
-                case EPoints.Level:
-                    var currentLevel = GetPoint(EPoints.Level);
-                    LevelUp((int)(value - currentLevel));
+                case EPoint.Level:
+                    var currentLevel = GetPoint(EPoint.Level);
+                    LevelUp((int)value - (int)currentLevel);
                     break;
-                case EPoints.Experience:
+                case EPoint.Experience:
                     Player.Experience = value;
                     CheckLevelUp();
                     break;
-                case EPoints.Gold:
+                case EPoint.Gold:
                     Player.Gold = value;
                     break;
-                case EPoints.PlayTime:
+                case EPoint.PlayTime:
                     Player.PlayTime = value;
                     break;
-                case EPoints.Skill:
+                case EPoint.Skill:
                     Player.AvailableSkillPoints = (byte)value;
+                    break;
+                case EPoint.HpRecovery:
+                    _hpRecoveryBucket = value;
+                    break;
+                case EPoint.SpRecovery:
+                    _spRecoveryBucket = value;
+                    break;
+                case EPoint.Stamina:
+                    var prevStamina = Player.Stamina;
+                    Player.Stamina = Math.Clamp(value, 0, GetPoint(EPoint.MaxStamina));
+                    if (prevStamina == 0 && Player.Stamina > 0 && Mobility.IsForcedToWalk)
+                    {
+                        Mobility.ClearForceWalk(GameServer.Instance.ServerTime);
+                    }
+                    else if (prevStamina > 0 && Player.Stamina == 0)
+                    {
+                        Mobility.ForceWalk(GameServer.Instance.ServerTime);
+                    }
+                    break;
+                case EPoint.Hp:
+                    if (value <= 0)
+                    {
+                        // 0 gets ignored by client
+                        // Setting the Hp to 0 does not register as killing the player
+                    }
+                    else
+                    {
+                        Health = Math.Min(value, GetPoint(EPoint.MaxHp));
+                    }
+                    break;
+                case EPoint.Sp:
+                    if (value <= 0)
+                    {
+                        // 0 gets ignored by client
+                    }
+                    else
+                    {
+                        Mana = Math.Min(value, GetPoint(EPoint.MaxSp));
+                    }
                     break;
                 default:
                     _logger.LogError("Failed to set point to {Point}, unsupported", point);
@@ -723,37 +772,35 @@ namespace QuantumCore.Game.World.Entities
 
         private void Inventory_OnSlotChanged(object? sender, SlotChangedEventArgs args)
         {
+            ApplyStatModifiersFromEquipment(args.Slot, args.ItemInstance);
+
             switch (args.Slot)
             {
                 case EquipmentSlots.Weapon:
-                    if (args.ItemInstance is not null)
+                    if (args.ItemInstance is null)
                     {
-                        var item = _itemManager.GetItem(args.ItemInstance.ItemId);
-                        Player.MinWeaponDamage = item?.GetMinWeaponDamage() ?? 0;
-                        Player.MaxWeaponDamage = item?.GetMaxWeaponDamage() ?? 0;
-                    }
-                    else
-                    {
-                        Player.MinWeaponDamage = 0;
-                        Player.MaxWeaponDamage = 0;
+                        Affects.RemoveAllOfType(AffectType.FromSkill(ESkill.AuraOfTheSword));
+                        Affects.RemoveAllOfType(AffectType.FromSkill(ESkill.EnchantedBlade));
                     }
 
                     break;
                 case EquipmentSlots.Body:
-                    if (args.ItemInstance is not null)
+                    if (Inventory.EquipmentWindow.Costume is null)  // costume overrides the normal armor (body) display
                     {
-                        Player.BodyPart = args.ItemInstance.ItemId;
-                    }
-                    else
-                    {
-                        Player.BodyPart = 0;
+                        Player.BodyPart = args.ItemInstance?.ItemId ?? 0;
                     }
                 
+                    break;
+                case EquipmentSlots.Costume:
+                    // fallback to armor (body) display if unequipping costume
+                    Player.BodyPart = args.ItemInstance?.ItemId ?? (Inventory.EquipmentWindow.Body?.ItemId ?? 0);
+                    
                     break;
                 case EquipmentSlots.Hair:
                     if (args.ItemInstance is not null)
                     {
-                        Player.HairPart = args.ItemInstance.GetHairPartOffsetForClient(Player.PlayerClass.GetClass());
+                        var item = _itemManager.GetItem(args.ItemInstance.ItemId);
+                        Player.HairPart = item.GetHairPartId();
                     }
                     else
                     {
@@ -761,67 +808,105 @@ namespace QuantumCore.Game.World.Entities
                     }
                 
                     break;
-                    
             }
         }
 
-        public override uint GetPoint(EPoints point)
+        private void ApplyStatModifiersFromEquipment(EquipmentSlots slot, ItemInstance? item)
         {
+            var slotModifierKey = slot.AsModifierSource();
+
+            _stats.RemoveAllModifiersWithSource(slotModifierKey);
+
+            if (item is null)
+            {
+                // only unequipped, nothing else to do.
+                return;
+            }
+
+            var proto = _itemManager.GetItem(item.ItemId);
+            if (proto == null)
+            {
+                return;
+            }
+
+            foreach (var (applyType, value) in proto.Applies)
+            {
+                var point = applyType.ToPoint();
+                // sanity checks
+                if (point == EPoint.None || value == 0)
+                {
+                    continue;
+                }
+
+                _stats[point] += (value, slotModifierKey);
+            }
+
+            // TODO: Socket bonuses
+
+            // TODO: Item attributes (switcher bonuses)
+
+            if (proto.IsType(EItemType.Armor) && proto.IsSubtype(EArmorSubtype.Body, EArmorSubtype.Head, EArmorSubtype.Shield, EArmorSubtype.Shoes))
+            {
+                _stats[EPoint.DefenceGrade] += (proto.Values[1] + 2 * proto.Values[5], slotModifierKey);
+            }
+
+            if (proto.IsType(EItemType.Weapon) && !proto.IsSubtype(EWeaponSubtype.Arrow))
+            {
+                _stats[EPoint.MinWeaponDamage] += (proto.GetMinWeaponDamage(), slotModifierKey);
+                _stats[EPoint.MaxWeaponDamage] += (proto.GetMaxWeaponDamage(), slotModifierKey);
+            }
+        }
+
+        public override uint GetPoint(EPoint point)
+        {
+            // Handle static properties stored directly in Player or Entity
             switch (point)
             {
-                case EPoints.Level:
+                case EPoint.Level:
                     return Player.Level;
-                case EPoints.Experience:
+                case EPoint.Experience:
                     return Player.Experience;
-                case EPoints.NeededExperience:
+                case EPoint.NeededExperience:
                     return _experienceManager.GetNeededExperience(Player.Level);
-                case EPoints.Hp:
+                case EPoint.Hp:
                     return (uint)Health;
-                case EPoints.Sp:
+                case EPoint.Sp:
                     return (uint)Mana;
-                case EPoints.MaxHp:
-                    return Player.MaxHp;
-                case EPoints.MaxSp:
-                    return Player.MaxSp;
-                case EPoints.St:
-                    return Player.St;
-                case EPoints.Ht:
-                    return Player.Ht;
-                case EPoints.Dx:
-                    return Player.Dx;
-                case EPoints.Iq:
-                    return Player.Iq;
-                case EPoints.AttackSpeed:
-                    return AttackSpeed;
-                case EPoints.MoveSpeed:
-                    return MovementSpeed;
-                case EPoints.Gold:
+                case EPoint.Stamina:
+                    return (uint)Player.Stamina;
+                case EPoint.Gold:
                     return Player.Gold;
-                case EPoints.MinWeaponDamage:
-                    return Player.MinWeaponDamage;
-                case EPoints.MaxWeaponDamage:
-                    return Player.MaxWeaponDamage;
-                case EPoints.MinAttackDamage:
-                    return Player.MinAttackDamage;
-                case EPoints.MaxAttackDamage:
-                    return Player.MaxAttackDamage;
-                case EPoints.Defence:
-                case EPoints.DefenceGrade:
-                    return _defence;
-                case EPoints.StatusPoints:
+                case EPoint.StatusPoints:
                     return Player.AvailableStatusPoints;
-                case EPoints.PlayTime:
+                case EPoint.PlayTime:
                     return (uint)TimeSpan.FromMilliseconds(Player.PlayTime).TotalMinutes;
-                case EPoints.Skill:
+                case EPoint.Skill:
                     return Player.AvailableSkillPoints;
-                case EPoints.SubSkill:
+                case EPoint.SubSkill:
                     return 1;
+                case EPoint.HpRecovery:
+                    return _hpRecoveryBucket;
+                case EPoint.SpRecovery:
+                    return _spRecoveryBucket;
+                
+                // Special cases with bonus aggregation
+                case EPoint.AttackGrade:
+                    return (uint)(_stats[EPoint.AttackGrade] + _stats[EPoint.AttackGradeBonus]);
+                case EPoint.DefenceGrade:
+                    return (uint)(_stats[EPoint.DefenceGrade] + _stats[EPoint.DefenceGradeBonus]);
+                case EPoint.MagicAttackGrade:
+                    return (uint)(_stats[EPoint.MagicAttackGrade] + _stats[EPoint.MagicAttackGradeBonus]);
+                case EPoint.MagicDefenceGrade:
+                    return (uint)(_stats[EPoint.MagicDefenceGrade] + _stats[EPoint.MagicDefenceGradeBonus]);
+                
+                // All other cases delegate to the stat system
                 default:
-                    if (Enum.GetValues<EPoints>().Contains(point))
+                    if (Enum.IsDefined(point)) 
                     {
-                        _logger.LogWarning("Point {Point} is not implemented on player", point);
+                        return (uint)_stats[point];
                     }
-
+                    
+                    // _logger.LogWarning("Point {Point} is not implemented on player", point);
                     return 0;
             }
         }
@@ -832,6 +917,11 @@ namespace QuantumCore.Game.World.Entities
 
             Player.PositionX = PositionX;
             Player.PositionY = PositionY;
+            Player.Health = Health;
+            Player.Mana = Mana;
+            Player.BodyPart = Inventory.EquipmentWindow.GetBodyPartId();
+            Player.HairPart = Inventory.EquipmentWindow.GetHairPartId(_itemManager);
+            // TODO: persist affects
 
             await Skills.PersistAsync();
 
@@ -890,7 +980,7 @@ namespace QuantumCore.Game.World.Entities
             var item = groundItem.Item;
             if (item.ItemId == 1)
             {
-                AddPoint(EPoints.Gold, (int)groundItem.Amount);
+                AddPoint(EPoint.Gold, (int)groundItem.Amount);
                 SendPoints();
                 Map.DespawnEntity(groundItem);
 
@@ -928,12 +1018,12 @@ namespace QuantumCore.Game.World.Entities
 
             // todo prevent crashing the server with dropping gold too often ;)
 
-            if (amount > GetPoint(EPoints.Gold))
+            if (amount > GetPoint(EPoint.Gold))
             {
                 return; // We can't drop more gold than we have ^^
             }
 
-            AddPoint(EPoints.Gold, -(int)amount);
+            AddPoint(EPoint.Gold, -(int)amount);
             SendPoints();
 
             var item = _itemManager.CreateItem(proto, 1); // count will be overwritten as it's gold
@@ -958,7 +1048,7 @@ namespace QuantumCore.Game.World.Entities
             // todo: implement server rates, and premium server rates
             if (GetPremiumRemainSeconds(EPremiumTypes.Item) > 0)
                 return 100;
-            return 100_000_000;
+            return 100;
         }
 
         public int GetPremiumRemainSeconds(EPremiumTypes type)
@@ -1006,7 +1096,7 @@ namespace QuantumCore.Game.World.Entities
             var totalSessionTime = Connection.Server.ServerTime - startSessionTime;
             if (totalSessionTime <= 0) return;
 
-            AddPoint(EPoints.PlayTime, (int)totalSessionTime);
+            AddPoint(EPoint.PlayTime, (int)totalSessionTime);
         }
 
         public ItemInstance? GetItem(byte window, ushort position)
@@ -1079,6 +1169,7 @@ namespace QuantumCore.Game.World.Entities
 
             if (antiFlags.HasFlag(AntiFlagGender))
             {
+                SendChatInfo("This item is equippable only for the opposite gender.");
                 return false;
             }
 
@@ -1118,9 +1209,6 @@ namespace QuantumCore.Game.World.Entities
                     {
                         // Equipment
                         Inventory.RemoveEquipment(item);
-                        CalculateDefence();
-                        CalculateMovement();
-                        CalculateAttackSpeed();
                         SendCharacterUpdate();
                         SendPoints();
                     }
@@ -1146,9 +1234,6 @@ namespace QuantumCore.Game.World.Entities
                         {
                             Inventory.SetEquipment(item, position);
                             item.Set(_cacheManager, Player.Id, window, position, _itemRepository).Wait(); // TODO
-                            CalculateDefence();
-                            CalculateMovement();
-                            CalculateAttackSpeed();
                             SendCharacterUpdate();
                             SendPoints();
                         }
@@ -1168,6 +1253,15 @@ namespace QuantumCore.Game.World.Entities
             SendGuildInfo();
             SendCharacter(connection);
             SendCharacterAdditional(connection);
+            
+            if (Mobility.IsCurrentlyWalking)
+            {
+                connection.Send(new SetMovingAnimation
+                {
+                    Vid = Vid,
+                    Mode = (byte)SetMovingAnimation.MovingMode.Walking
+                });
+            }
         }
 
         public override void HideEntity(IConnection connection)
@@ -1206,7 +1300,7 @@ namespace QuantumCore.Game.World.Entities
             var points = new CharacterPoints();
             for (var i = 0; i < points.Points.Length; i++)
             {
-                points.Points[i] = GetPoint((EPoints)i);
+                points.Points[i] = GetPoint((EPoint)i);
             }
 
             Connection.Send(points);
@@ -1240,6 +1334,7 @@ namespace QuantumCore.Game.World.Entities
 
         public void SendCharacter(IConnection connection)
         {
+            SyncSpeedsFromComputedStats();
             connection.Send(new SpawnCharacter
             {
                 Vid = Vid,
@@ -1249,7 +1344,8 @@ namespace QuantumCore.Game.World.Entities
                 PositionY = PositionY,
                 Class = (ushort)Player.PlayerClass,
                 MoveSpeed = MovementSpeed,
-                AttackSpeed = AttackSpeed
+                AttackSpeed = AttackSpeed,
+                Affects = (ulong)Affects.GetActiveFlags()
             });
         }
 
@@ -1262,29 +1358,34 @@ namespace QuantumCore.Game.World.Entities
                 Empire = Player.Empire,
                 Level = Player.Level,
                 GuildId = Guild?.Id ?? 0,
-                Parts = new ushort[]
-                {
-                    (ushort)(Inventory.EquipmentWindow.Body?.ItemId ?? 0),
-                    (ushort)(Inventory.EquipmentWindow.Weapon?.ItemId ?? 0), 0,
-                    (ushort)Inventory.EquipmentWindow.Hair.GetHairPartOffsetForClient(Player.PlayerClass.GetClass())
-                }
+                Parts =
+                [
+                    (ushort)Inventory.EquipmentWindow.GetBodyPartId(),
+                    (ushort)(Inventory.EquipmentWindow.Weapon?.ItemId ?? 0),
+                    0,
+                    (ushort)Inventory.EquipmentWindow.GetHairPartId(_itemManager)
+                ]
             });
         }
 
         public void SendCharacterUpdate()
         {
+            SyncSpeedsFromComputedStats();
+            
             var packet = new CharacterUpdate
             {
                 Vid = Vid,
-                Parts = new ushort[]
-                {
-                    (ushort)(Inventory.EquipmentWindow.Body?.ItemId ?? 0),
-                    (ushort)(Inventory.EquipmentWindow.Weapon?.ItemId ?? 0), 0,
-                    (ushort)Inventory.EquipmentWindow.Hair.GetHairPartOffsetForClient(Player.PlayerClass.GetClass())
-                },
+                Parts =
+                [
+                    (ushort)Inventory.EquipmentWindow.GetBodyPartId(),
+                    (ushort)(Inventory.EquipmentWindow.Weapon?.ItemId ?? 0),
+                    0,
+                    (ushort)Inventory.EquipmentWindow.GetHairPartId(_itemManager)
+                ],
                 MoveSpeed = MovementSpeed,
                 AttackSpeed = AttackSpeed,
-                GuildId = Guild?.Id ?? 0
+                GuildId = Guild?.Id ?? 0,
+                Affects = (ulong)Affects.GetActiveFlags()
             };
 
             Connection.Send(packet);
@@ -1325,6 +1426,89 @@ namespace QuantumCore.Game.World.Entities
             Connection.Send(chat);
         }
 
+        private void OnMobilityModeChanged(EMobilityMode from, EMobilityMode to)
+        {
+            var mode = to switch
+            {
+                EMobilityMode.Walk => (byte)SetMovingAnimation.MovingMode.Walking,
+                EMobilityMode.Run => (byte)SetMovingAnimation.MovingMode.Running,
+                _ => throw new ArgumentOutOfRangeException(nameof(to))
+            };
+
+            var broadcast = new SetMovingAnimation { Vid = Vid, Mode = mode };
+            Connection.Send(broadcast);
+            foreach (var p in this.GetNearbyPlayers())
+            {
+                p.Connection.Send(broadcast);
+            }
+        }
+        
+        private void OnAffectAdded(EntityAffect affect)
+        {
+            if (affect.AffectFlag == EAffect.FlameSpirit)
+            {
+                _flameSpiritHitTicker.ArmFirstTickDelay();
+            }
+
+            var pointsChanged = false;
+            if (affect.ModifiedPointId != EPoint.None && affect.ModifiedPointDelta != 0)
+            {
+                _stats[affect.ModifiedPointId] += (affect.ModifiedPointDelta, affect);
+                pointsChanged = true;
+            }
+
+            Connection.Send(new AddAffect
+            {
+                AffectType = affect.AffectType.ToRaw(),
+                ModifiedPointId = (byte)affect.ModifiedPointId,
+                ModifiedPointDelta = affect.ModifiedPointDelta,
+                AffectFlag = (uint)affect.AffectFlag,
+                TotalDurationSec = (int)affect.RemainingDuration.TotalSeconds
+            });
+
+            SendCharacterUpdate();
+            if (pointsChanged)
+            {
+                SendPoints();
+            }
+        }
+
+        private void OnAffectRemoved(EntityAffect affect)
+        {
+            var pointsChanged = false;
+            if (affect.ModifiedPointId != EPoint.None)
+            {
+                pointsChanged = _stats[affect.ModifiedPointId].RemoveModifier(affect);
+            }
+            
+            Connection.Send(new RemoveAffect
+            {
+                AffectType = affect.AffectType.ToRaw(),
+                ModifiedPointId = (byte)affect.ModifiedPointId
+            });
+
+            SendCharacterUpdate();
+            if (pointsChanged)
+            {
+                SendPoints();
+            }
+        }
+
+        private void SyncSpeedsFromComputedStats()
+        {
+            AttackSpeed = (byte)Math.Clamp(_stats[EPoint.AttackSpeed], 0, byte.MaxValue);
+            MovementSpeed = (byte)Math.Clamp(_stats[EPoint.MoveSpeed], 0, byte.MaxValue);
+        }
+
+        private void SyncEquipmentModifiers()
+        {
+            foreach (var slot in Enum.GetValues<EquipmentSlots>())
+            {
+                var item = Inventory.EquipmentWindow.GetItem(slot);
+                ApplyStatModifiersFromEquipment(slot, item);
+            }
+        }
+
         public void SendTarget()
         {
             var packet = new SetTarget();
@@ -1343,9 +1527,25 @@ namespace QuantumCore.Game.World.Entities
             Connection.Close();
         }
 
+        public bool CancelCountdownEvent()
+        {
+            if (_countdownEventId.HasValue)
+            {
+                var wasScheduled = EventSystem.CancelEvent(_countdownEventId.Value);
+                _countdownEventId = null;
+                return wasScheduled;
+            }
+            return false;
+        }
+
+        public void SetCountdownEventCancellable(long eventId)
+        {
+            _countdownEventId = eventId;
+        }
+
         public override string ToString()
         {
-            return Player.Name + "(Player)";
+            return $"[Lv {GetPoint(EPoint.Level)}] {Player.Name} ({Vid})";
         }
 
         public void Dispose()

@@ -5,6 +5,7 @@ using Microsoft.Extensions.FileProviders.Physical;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using QuantumCore.API;
+using QuantumCore.API.Game.Types.Skills;
 using QuantumCore.API.Game.World;
 using QuantumCore.Game;
 using QuantumCore.Game.Drops;
@@ -1218,4 +1219,73 @@ public class ParserTests
         result[3].ItemProtoId.Should().Be(12);
         result[3].Chance.Should().BeApproximately(0.16f * 10000, CHANCE_ALLOWED_APPROXIMATION);
     }
+
+    [Theory]
+    [InlineData(ESkill.BerserkerFury, EAffect.Berserk, EAffect.Berserk)]
+    [InlineData(ESkill.Stealth, EAffect.Stealth, EAffect.Stealth)]
+    [InlineData(ESkill.FeatherWalk, EAffect.FeatherWalk, EAffect.FeatherWalk)]
+    [InlineData(ESkill.SupportItemCreation, EAffect.None, EAffect.None)]
+    [InlineData(ESkill.AuraOfTheSword, EAffect.None, EAffect.None)]
+    [InlineData(ESkill.Dash, EAffect.None, EAffect.None)]
+    public async Task Skills_ParseAffectFlagsUsingOneBasedIndexing(
+        ESkill skillId,
+        EAffect expectedAff1,
+        EAffect expectedAff2)
+    {
+        string encodedAff1;
+        if (expectedAff1 != EAffect.None)
+        {
+            encodedAff1 = ((int)expectedAff1 - 1).ToString();
+        }
+        else
+        {
+            encodedAff1 = "";
+        }
+
+        string encodedAff2;
+        if (expectedAff2 != EAffect.None)
+        {
+            encodedAff2 = ((int)expectedAff2 - 1).ToString();
+        }
+        else
+        {
+            encodedAff2 = "";
+        }
+
+        var tempPath = Path.Combine(Path.GetTempPath(), $"skilltable_{Guid.NewGuid():N}.txt");
+        await File.WriteAllTextAsync(tempPath, MockSkilltableLine(skillId, encodedAff1, encodedAff2));
+        try
+        {
+            var fileProvider = Substitute.For<IFileProvider>();
+            fileProvider.GetFileInfo("skilltable.txt")
+                .Returns(_ => new PhysicalFileInfo(new FileInfo(tempPath)));
+
+            var parser = new ParserService(Substitute.For<ILoggerFactory>(), fileProvider);
+
+            var skills = await parser.GetSkillsAsync("skilltable.txt");
+            var skill = skills.Single(s => s.Id == skillId);
+            
+            
+            skill.AffectFlag.Should().Be(expectedAff1);
+            skill.AffectFlag2.Should().Be(expectedAff2);
+        }
+        finally
+        {
+            File.Delete(tempPath);
+        }
+    }
+
+    private static string MockSkilltableLine(ESkill skillId, string? rawPrimaryAff, string? rawSecondaryAff)
+    {
+        var columns = new[]
+        {
+            ((uint)skillId).ToString(), skillId.ToString(), "1", "1", "1", "0", "ATT_SPEED", "50*k", "50+140*k",
+            "60+90*k", string.Empty, "63+90*k", string.Empty, string.Empty, "SELFONLY",
+            rawPrimaryAff ?? string.Empty, "MOV_SPEED", "20*k", "60+90*k",
+            rawSecondaryAff ?? string.Empty, "0", "0", "NORMAL", "1", "1", "0", "0"
+        };
+
+        return string.Join('\t', columns) + Environment.NewLine;
+    }
+
 }

@@ -22,6 +22,7 @@ public static class ConfigurationExtensions
         // Character Stats
         config.AddInMemoryCollection(new Dictionary<string, string?>
         {
+            #region Warrior Male
             {"job:0:Id", "0"},
             {"job:0:Name", "warrior"},
             {"job:0:St", "6"},
@@ -34,6 +35,11 @@ public static class ConfigurationExtensions
             {"job:0:SpPerIq", "20"},
             {"job:0:HpPerLevel", "36"},
             {"job:0:SpPerLevel", "44"},
+            {"job:0:MaxStamina", "800"},
+            {"job:0:StaminaPerHt", "5"},
+            #endregion
+            
+            #region Ninja Female
             {"job:1:Id", "1"},
             {"job:1:Name", "assassin"},
             {"job:1:St", "4"},
@@ -46,6 +52,11 @@ public static class ConfigurationExtensions
             {"job:1:SpPerIq", "20"},
             {"job:1:HpPerLevel", "36"},
             {"job:1:SpPerLevel", "44"},
+            {"job:1:MaxStamina", "800"},
+            {"job:1:StaminaPerHt", "5"},
+            #endregion
+            
+            #region Sura Male
             {"job:2:Id", "2"},
             {"job:2:Name", "sura"},
             {"job:2:St", "5"},
@@ -58,6 +69,11 @@ public static class ConfigurationExtensions
             {"job:2:SpPerIq", "20"},
             {"job:2:HpPerLevel", "36"},
             {"job:2:SpPerLevel", "44"},
+            {"job:2:MaxStamina", "800"},
+            {"job:2:StaminaPerHt", "5"},
+            #endregion
+            
+            #region Shaman Female
             {"job:3:Id", "3"},
             {"job:3:Name", "shamana"},
             {"job:3:St", "3"},
@@ -70,6 +86,11 @@ public static class ConfigurationExtensions
             {"job:3:SpPerIq", "20"},
             {"job:3:HpPerLevel", "36"},
             {"job:3:SpPerLevel", "44"},
+            {"job:3:MaxStamina", "800"},
+            {"job:3:StaminaPerHt", "5"},
+            #endregion
+            
+            #region Shaman Female
             {"job:4:Id", "4"},
             {"job:4:Name", "warrior"},
             {"job:4:St", "6"},
@@ -82,6 +103,11 @@ public static class ConfigurationExtensions
             {"job:4:SpPerIq", "20"},
             {"job:4:HpPerLevel", "36"},
             {"job:4:SpPerLevel", "44"},
+            {"job:4:MaxStamina", "800"},
+            {"job:4:StaminaPerHt", "5"},
+            #endregion
+            
+            #region Ninja Male
             {"job:5:Id", "5"},
             {"job:5:Name", "assassin"},
             {"job:5:St", "4"},
@@ -94,6 +120,11 @@ public static class ConfigurationExtensions
             {"job:5:SpPerIq", "20"},
             {"job:5:HpPerLevel", "36"},
             {"job:5:SpPerLevel", "44"},
+            {"job:5:MaxStamina", "800"},
+            {"job:5:StaminaPerHt", "5"},
+            #endregion
+            
+            #region Sura Female
             {"job:6:Id", "6"},
             {"job:6:Name", "sura"},
             {"job:6:St", "5"},
@@ -106,6 +137,11 @@ public static class ConfigurationExtensions
             {"job:6:SpPerIq", "20"},
             {"job:6:HpPerLevel", "36"},
             {"job:6:SpPerLevel", "44"},
+            {"job:6:MaxStamina", "800"},
+            {"job:6:StaminaPerHt", "5"},
+            #endregion
+            
+            #region Shaman Male
             {"job:7:Id", "7"},
             {"job:7:Name", "shamana"},
             {"job:7:St", "3"},
@@ -118,6 +154,9 @@ public static class ConfigurationExtensions
             {"job:7:SpPerIq", "20"},
             {"job:7:HpPerLevel", "36"},
             {"job:7:SpPerLevel", "44"},
+            {"job:7:MaxStamina", "800"},
+            {"job:7:StaminaPerHt", "5"},
+            #endregion
         });
 
         // Item drops delta values
@@ -191,7 +230,7 @@ public static class ConfigurationExtensions
 
         config.AddInMemoryCollection(new Dictionary<string, string?>()
         {
-            // metin of battle
+            #region metin of battle
             {"game:drops:metinstones:0:monsterprotoid", "8005"},
             {"game:drops:metinstones:0:dropchance", "60"},
             {"game:drops:metinstones:0:rankchance:0", "30"},
@@ -199,7 +238,9 @@ public static class ConfigurationExtensions
             {"game:drops:metinstones:0:rankchance:2", "30"},
             {"game:drops:metinstones:0:rankchance:3", "9"},
             {"game:drops:metinstones:0:rankchance:4", "1"},
-            // metin of greed
+            #endregion
+            
+            #region metin of greed
             {"game:drops:metinstones:1:monsterprotoid", "8006"},
             {"game:drops:metinstones:1:dropchance", "60"},
             {"game:drops:metinstones:1:rankchance:0", "28"},
@@ -207,7 +248,9 @@ public static class ConfigurationExtensions
             {"game:drops:metinstones:1:rankchance:2", "31"},
             {"game:drops:metinstones:1:rankchance:3", "11"},
             {"game:drops:metinstones:1:rankchance:4", "1"},
-            // metin of black
+            #endregion
+            
+            #region metin of black
             {"game:drops:metinstones:2:monsterprotoid", "8007"},
             {"game:drops:metinstones:2:dropchance", "60"},
             {"game:drops:metinstones:2:rankchance:0", "24"},
@@ -215,7 +258,9 @@ public static class ConfigurationExtensions
             {"game:drops:metinstones:2:rankchance:2", "32"},
             {"game:drops:metinstones:2:rankchance:3", "13"},
             {"game:drops:metinstones:2:rankchance:4", "2"},
-            // metin of darkness
+            #endregion
+            
+            #region metin of darkness
             {"game:drops:metinstones:3:monsterprotoid", "8008"},
             {"game:drops:metinstones:3:dropchance", "60"},
             {"game:drops:metinstones:3:rankchance:0", "22"},
@@ -223,7 +268,9 @@ public static class ConfigurationExtensions
             {"game:drops:metinstones:3:rankchance:2", "33"},
             {"game:drops:metinstones:3:rankchance:3", "15"},
             {"game:drops:metinstones:3:rankchance:4", "2"},
-            // metin of jealousy
+            #endregion
+            
+            #region metin of jealousy
             {"game:drops:metinstones:4:monsterprotoid", "8009"},
             {"game:drops:metinstones:4:dropchance", "60"},
             {"game:drops:metinstones:4:rankchance:0", "21"},
@@ -231,7 +278,9 @@ public static class ConfigurationExtensions
             {"game:drops:metinstones:4:rankchance:2", "33"},
             {"game:drops:metinstones:4:rankchance:3", "17"},
             {"game:drops:metinstones:4:rankchance:4", "2"},
-            // metin of soul
+            #endregion
+            
+            #region metin of soul
             {"game:drops:metinstones:5:monsterprotoid", "8010"},
             {"game:drops:metinstones:5:dropchance", "60"},
             {"game:drops:metinstones:5:rankchance:0", "18"},
@@ -239,7 +288,9 @@ public static class ConfigurationExtensions
             {"game:drops:metinstones:5:rankchance:2", "34"},
             {"game:drops:metinstones:5:rankchance:3", "20"},
             {"game:drops:metinstones:5:rankchance:4", "2"},
-            // metin of shadow
+            #endregion
+            
+            #region metin of shadow
             {"game:drops:metinstones:6:monsterprotoid", "8011"},
             {"game:drops:metinstones:6:dropchance", "60"},
             {"game:drops:metinstones:6:rankchance:0", "14"},
@@ -247,7 +298,9 @@ public static class ConfigurationExtensions
             {"game:drops:metinstones:6:rankchance:2", "35"},
             {"game:drops:metinstones:6:rankchance:3", "22"},
             {"game:drops:metinstones:6:rankchance:4", "3"},
-            // metin of toughness
+            #endregion
+            
+            #region metin of toughness
             {"game:drops:metinstones:7:monsterprotoid", "8012"},
             {"game:drops:metinstones:7:dropchance", "60"},
             {"game:drops:metinstones:7:rankchance:0", "10"},
@@ -255,7 +308,9 @@ public static class ConfigurationExtensions
             {"game:drops:metinstones:7:rankchance:2", "37"},
             {"game:drops:metinstones:7:rankchance:3", "24"},
             {"game:drops:metinstones:7:rankchance:4", "3"},
-            // metin of devil
+            #endregion
+            
+            #region metin of devil
             {"game:drops:metinstones:8:monsterprotoid", "8013"},
             {"game:drops:metinstones:8:dropchance", "60"},
             {"game:drops:metinstones:8:rankchance:0", "2"},
@@ -263,7 +318,9 @@ public static class ConfigurationExtensions
             {"game:drops:metinstones:8:rankchance:2", "40"},
             {"game:drops:metinstones:8:rankchance:3", "29"},
             {"game:drops:metinstones:8:rankchance:4", "3"},
-            // metin of fall
+            #endregion
+            
+            #region metin of fall
             {"game:drops:metinstones:9:monsterprotoid", "8014"},
             {"game:drops:metinstones:9:dropchance", "60"},
             {"game:drops:metinstones:9:rankchance:0", "0"},
@@ -271,6 +328,7 @@ public static class ConfigurationExtensions
             {"game:drops:metinstones:9:rankchance:2", "41"},
             {"game:drops:metinstones:9:rankchance:3", "30"},
             {"game:drops:metinstones:9:rankchance:4", "3"},
+            #endregion
         });
 
         // Spirit Stone Drops

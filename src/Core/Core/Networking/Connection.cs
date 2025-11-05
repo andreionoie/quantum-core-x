@@ -29,6 +29,7 @@ namespace QuantumCore.Core.Networking
         private CancellationTokenSource? _cts;
 
         public IPAddress BoundIpAddress { get; private set; }
+        public IPEndPoint RemoteEndpoint { get; private set; }
 
         public Guid Id { get; }
         public uint Handshake { get; private set; }
@@ -47,6 +48,7 @@ namespace QuantumCore.Core.Networking
         {
             _client = client;
             BoundIpAddress = ((IPEndPoint)_client.Client.LocalEndPoint!).Address;
+            RemoteEndpoint = (IPEndPoint)_client.Client.RemoteEndPoint!;
             _cts = new CancellationTokenSource();
             Task.Factory.StartNew(SendPacketsWhenAvailable, TaskCreationOptions.LongRunning);
         }
@@ -67,7 +69,7 @@ namespace QuantumCore.Core.Networking
                 return;
             }
 
-            _logger.LogInformation("New connection from {RemoteEndPoint}", _client.Client.RemoteEndPoint?.ToString());
+            _logger.LogInformation("[{BoundIpAddress}] New connection from {RemoteEndpoint}", BoundIpAddress.ToString(), RemoteEndpoint.ToString());
 
             _stream = _client.GetStream();
             StartHandshake();

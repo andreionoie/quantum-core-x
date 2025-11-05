@@ -1,5 +1,9 @@
 ﻿using CommandLine;
 using QuantumCore.API.Game;
+using QuantumCore.API.Game.Types;
+using QuantumCore.API.Game.Types.Skills;
+using QuantumCore.API.Systems.Affects;
+using static QuantumCore.Game.Systems.Tickers.AffectsTickerHelpers;
 
 namespace QuantumCore.Game.Commands;
 
@@ -8,8 +12,19 @@ public class SetMaxHpCommand : ICommandHandler<SetMaxHpCommandOptions>
 {
     public Task ExecuteAsync(CommandContext<SetMaxHpCommandOptions> context)
     {
-        context.Player.Player.MaxHp = context.Arguments.Value;
-        context.Player.Health = Math.Min(context.Player.Health, context.Arguments.Value);
+        context.Player.Affects.Remove(AffectType.From(EAffectType.None), EPoint.MaxHp);
+        var affect = new EntityAffect
+        {
+            ModifiedPointId = EPoint.MaxHp,
+            ModifiedPointDelta = (int)context.Arguments.Value - (int)context.Player.GetPoint(EPoint.MaxHp),
+            RemainingDuration = EntityAffect.PermanentAffectDurationThreshold,
+            DoNotPersist = true
+        };
+
+        context.Player.Affects.Upsert(affect);
+
+        var newMax = context.Player.GetPoint(EPoint.MaxHp);
+        context.Player.Health = Math.Min(context.Player.Health, newMax);
         context.Player.SendPoints();
 
         return Task.CompletedTask;

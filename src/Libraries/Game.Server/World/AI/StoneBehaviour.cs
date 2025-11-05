@@ -92,6 +92,17 @@ public class StoneBehaviour : IBehaviour
 
             _spawnedEntities.Clear();
         }
+        else
+        {
+            // Re-aggro any relaxed mobs onto the new attacker
+            foreach (var spawnedEntity in _spawnedEntities)
+            {
+                if (spawnedEntity is MonsterEntity { Dead: false, Health: > 0, Target: null, Behaviour: SimpleBehaviour simple })
+                {
+                    simple.Target = attacker;
+                }
+            }
+        }
     }
 
     private void SpawnMonsters(IEntity attacker)

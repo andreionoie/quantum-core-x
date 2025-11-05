@@ -5,6 +5,7 @@ using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using QuantumCore.API;
+using QuantumCore.API.Game.Items;
 using QuantumCore.API.Game.Types;
 using QuantumCore.API.Game.World;
 using QuantumCore.API.PluginTypes;
@@ -40,7 +41,7 @@ namespace QuantumCore.Game
             [FromKeyedServices(HostingOptions.ModeGame)]
             IPacketManager packetManager, ILogger<GameServer> logger,
             PluginExecutor pluginExecutor, IServiceProvider serviceProvider,
-            ICommandManager commandManager)
+            ICommandManager commandManager, IItemUseDispatcher itemUseDispatcher)
             : base(packetManager, logger, pluginExecutor, serviceProvider, HostingOptions.ModeGame)
         {
             _logger = logger;

@@ -16,6 +16,6 @@ namespace QuantumCore.Game.Packets
         [Field(7)] public byte MoveSpeed { get; set; }
         [Field(8)] public byte AttackSpeed { get; set; }
         [Field(9)] public byte State { get; set; }
-        [Field(10, ArrayLength = 2)] public uint[] Affects { get; set; } = new uint[2];
+        [Field(10)] public ulong Affects { get; set; }
     }
 }

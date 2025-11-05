@@ -17,7 +17,9 @@ namespace QuantumCore.Game
     {
         private readonly ILogger<ItemManager> _logger;
         private readonly IFileProvider _fileProvider;
-        private ImmutableArray<ItemData> _items;
+        private ImmutableDictionary<uint, ItemData> _itemsById = ImmutableDictionary<uint, ItemData>.Empty;
+        
+        private readonly Lazy<Task> _loader;
 
         static ItemManager()
         {
@@ -28,47 +30,58 @@ namespace QuantumCore.Game
         {
             _logger = logger;
             _fileProvider = fileProvider;
+            _loader = new Lazy<Task>(LoadItemProtoAsync, LazyThreadSafetyMode.ExecutionAndPublication);
         }
 
         /// <summary>
-        /// Query for a specific item definition by it's id
+        /// Query for a specific item definition by it's id (O(1) lookup)
         /// </summary>
         /// <param name="id">Item ID</param>
         /// <returns>The item definition or null if the item is not known</returns>
         public ItemData? GetItem(uint id)
         {
-            return _items.FirstOrDefault(item => item.Id == id);
+            _itemsById.TryGetValue(id, out var item);
+            return item;
         }
 
         public bool TryGetItem(uint id, [NotNullWhen(true)] out ItemData? data)
         {
-            data = _items.FirstOrDefault(item => item.Id == id);
-            return data is not null;
+            return _itemsById.TryGetValue(id, out data);
         }
 
         public ItemData? GetItemByName(ReadOnlySpan<char> name)
         {
-            foreach (var dataItem in _items)
+            foreach (var item in _itemsById.Values)
             {
-                if (name.Equals(dataItem.Name, StringComparison.InvariantCulture))
+                if (name.Equals(item.Name, StringComparison.InvariantCulture))
                 {
-                    return dataItem;
+                    return item;
                 }
             }
 
             return null;
         }
 
+        public IEnumerable<ItemData> GetAllItems()
+        {
+            return _itemsById.Values;
+        }
+
         /// <summary>
-        /// Try to load the item_proto file
+        /// Try to load the item_proto file - idempotent and thread-safe due to Lazy<> usage
         /// </summary>
         public async Task LoadAsync(CancellationToken token = default)
+        {
+            await _loader.Value.WaitAsync(token); 
+        }
+        
+        private async Task LoadItemProtoAsync()
         {
             var file = _fileProvider.GetFileInfo("item_proto");
             if (!file.Exists)
             {
                 _logger.LogWarning("{Path} does not exist, items not loaded", file.PhysicalPath);
-                _items = [];
+                _itemsById = ImmutableDictionary<uint, ItemData>.Empty;
                 return;
             }
 
@@ -83,7 +96,7 @@ namespace QuantumCore.Game
             var itemsRaw = items.Decode(result.Payload.EncryptedPayload);
             var data = bs.Deserialize<ItemData[]>(itemsRaw);
 
-            _items = data.Select(proto => new ItemData
+            _itemsById = data.Select(proto => new ItemData
             {
                 Applies = proto.Applies.Select(x => new ItemApplyData {Type = x.Type, Value = x.Value}).ToList(),
                 Flags = proto.Flags,
@@ -108,7 +121,7 @@ namespace QuantumCore.Game
                 UpgradeSet = proto.UpgradeSet,
                 WearFlags = proto.WearFlags,
                 MagicItemPercentage = proto.MagicItemPercentage
-            }).ToImmutableArray();
+            }).ToImmutableDictionary(x => x.Id);
         }
 
         /// <summary>

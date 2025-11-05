@@ -72,6 +72,8 @@ public static class ServiceExtensions
                             x.GetCustomAttribute<PacketAttribute>()?.Direction.HasFlag(EDirection.Incoming) == true)
                 .OrderBy(x => x.FullName)
                 .ToArray();
+            // TODO: Order by assembly (core first, plugins last) to ensure plugins override core handlers
+            // Currently uses alphabetical ordering which doesn't guarantee plugin precedence
             var handlerTypes = AppDomain.CurrentDomain.GetAssemblies()
                 .Where(x => !x.IsDynamic)
                 .SelectMany(x => x.ExportedTypes)

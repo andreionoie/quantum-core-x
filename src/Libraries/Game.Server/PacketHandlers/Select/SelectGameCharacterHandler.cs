@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using QuantumCore.API;
 using QuantumCore.API.Game.Types;
 using QuantumCore.API.PluginTypes;
@@ -50,7 +50,9 @@ public class SelectGameCharacterHandler : IGamePacketHandler<SelectCharacter>
 
         // Send information about the player to the client
         entity.SendBasicData();
+        entity.SendInventory();
         entity.SendPoints();
+        entity.Skills.Send();
         entity.QuickSlotBar.Send();
     }
 }

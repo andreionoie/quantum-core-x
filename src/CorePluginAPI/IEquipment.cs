@@ -8,6 +8,7 @@ public interface IEquipment
     uint Owner { get; }
     ItemInstance? Body { get; }
     ItemInstance? Head { get; }
+    ItemInstance? Shield { get; }
     ItemInstance? Shoes { get; }
     ItemInstance? Bracelet { get; }
     ItemInstance? Weapon { get; }
@@ -15,6 +16,8 @@ public interface IEquipment
     ItemInstance? Earrings { get; }
     ItemInstance? Costume { get; }
     ItemInstance? Hair { get; }
+    ItemInstance? Unique1 { get; }
+    ItemInstance? Unique2 { get; }
     bool SetItem(ItemInstance item);
     bool SetItem(ItemInstance item, ushort position);
     ItemInstance? GetItem(EquipmentSlots slot);

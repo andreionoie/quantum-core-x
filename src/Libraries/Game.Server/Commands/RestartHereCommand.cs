@@ -8,6 +8,7 @@ namespace QuantumCore.Game.Commands
     {
         public Task ExecuteAsync(CommandContext context)
         {
+            // TODO: minimum wait time after death 10 seconds
             context.Player.Respawn(false);
             return Task.CompletedTask;
         }

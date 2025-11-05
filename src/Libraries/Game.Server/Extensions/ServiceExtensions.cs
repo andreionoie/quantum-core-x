@@ -4,9 +4,11 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using QuantumCore.API;
 using QuantumCore.API.Game.Guild;
+using QuantumCore.API.Game.Items;
 using QuantumCore.API.PluginTypes;
 using QuantumCore.Extensions;
 using QuantumCore.Game.Commands;
+using QuantumCore.Game.ItemHandlers;
 using QuantumCore.Game.Persistence.Extensions;
 using QuantumCore.Game.PlayerUtils;
 using QuantumCore.Game.Services;
@@ -24,6 +26,10 @@ public static class ServiceExtensions
                 .AddClasses(classes => classes.AssignableTo<IPacketHandler>())
                 .AsImplementedInterfaces()
                 .WithScopedLifetime();
+            scan.FromAssemblyOf<GameServer>()
+                .AddClasses(classes => classes.AssignableTo<IItemUseHandler>())
+                .AsSelfWithInterfaces()
+                .WithScopedLifetime(); // Handlers depend on scoped services (DbContext)
             scan.FromAssemblyOf<GameServer>()
                 .AddClasses(classes => classes.AssignableTo<ILoadable>(), false)
                 .AsSelfWithInterfaces()
@@ -48,10 +54,13 @@ public static class ServiceExtensions
         services.AddSingleton<IMapAttributeProvider, MapAttributeProvider>();
         services.AddSingleton<IJobManager, JobManager>();
         services.AddSingleton<IStructuredFileProvider, StructuredFileProvider>();
-        services.AddScoped<IAtlasProvider, AtlasProvider>();
+        services.AddSingleton<IAtlasProvider, AtlasProvider>();
         services.AddScoped<IGuildManager, GuildManager>();
         services.AddScoped<IPlayerFactory, PlayerFactory>();
         services.AddScoped<IPlayerManager, PlayerManager>();
+
+        services.AddSingleton<ItemUseDispatcher>();
+        services.AddSingleton<IItemUseDispatcher>(sp => sp.GetRequiredService<ItemUseDispatcher>());
 
         return services;
     }

@@ -5,15 +5,9 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace QuantumCore.Networking;
 
-internal class DeserializeGenerator
+internal class DeserializeGenerator(GeneratorContext context)
 {
-    private readonly GeneratorContext _context;
     private static readonly Regex TrimAssignmentRegex = new(@"(\s+) = (.+)", RegexOptions.Compiled);
-
-    public DeserializeGenerator(GeneratorContext context)
-    {
-        _context = context;
-    }
 
     public string Generate(TypeDeclarationSyntax type, string dynamicByteIndex)
     {
@@ -56,13 +50,24 @@ internal class DeserializeGenerator
     {
         var staticByteIndex = 0;
         var dynamicByteIndexLocal = new StringBuilder(dynamicByteIndex);
-        var fields = _context.GetFieldsOfType(type);
+        var fields = context.GetFieldsOfType(type);
+
+        var sizeField = fields.FirstOrDefault(f => f.IsPacketSize);
+        var varLenField = fields.FirstOrDefault(f => f.IsVarLen);
+        var isVarLenPacket = sizeField is not null && varLenField is not null;
+
         var typeStaticSize = fields.Sum(x => x.ElementSize);
         var fieldsCopy = fields.ToArray();
         var sb = new StringBuilder();
         // declare and initialize variables
         foreach (var field in fields)
         {
+            if (isVarLenPacket && field.IsVarLen)
+            {
+                sb.Append(GenerateVarLenRead(field, sizeField!, ref staticByteIndex, dynamicByteIndexLocal, indentPrefix, isStreamMode));
+                continue;
+            }
+
             var line = GetMethodLine(field, ref staticByteIndex, dynamicByteIndexLocal, "", indentPrefix, true,
                 isStreamMode);
 
@@ -89,13 +94,13 @@ internal class DeserializeGenerator
         dynamicByteIndexLocal = new StringBuilder(dynamicByteIndex);
         if (type is RecordDeclarationSyntax)
         {
-            var line = GetLineForInitializer(_context.GetTypeInfo(type)!, ref staticByteIndex, dynamicByteIndexLocal,
+            var line = GetLineForInitializer(context.GetTypeInfo(type)!, ref staticByteIndex, dynamicByteIndexLocal,
                 "", indentPrefix, false, false);
             sb.AppendLine($"{indentPrefix}var obj = {line};");
         }
         else
         {
-            sb.AppendLine($"{indentPrefix}var obj = new {_context.GetTypeInfo(type).GetFullName()}");
+            sb.AppendLine($"{indentPrefix}var obj = new {context.GetTypeInfo(type).GetFullName()}");
             sb.AppendLine($"{indentPrefix}{{");
             for (var i = 0; i < fields.Length; i++)
             {
@@ -118,6 +123,45 @@ internal class DeserializeGenerator
         }
 
         sb.Append($"{indentPrefix}return obj;");
+
+        return sb.ToString();
+    }
+
+    private string GenerateVarLenRead(FieldData varLenField, FieldData sizeField,
+        ref int staticByteIndex, StringBuilder dynamicOffset, string indentPrefix, bool isStreamMode)
+    {
+        var sb = new StringBuilder();
+        var sizeVar = GetVariableNameForExpression(sizeField.Name);
+        var elementType = ((IArrayTypeSymbol)varLenField.SemanticType).ElementType;
+        var elementTypeName = elementType.GetFullName();
+        var arrVar = GetVariableNameForExpression(varLenField.Name);
+
+        // total payload length = total size - (1=header + 2=size as ushort)
+        sb.AppendLine($"{indentPrefix}var __dataLen = (int){sizeVar} - 3;");
+        sb.AppendLine($"{indentPrefix}var __count = __dataLen / {varLenField.ElementSize};");
+        sb.AppendLine($"{indentPrefix}var {arrVar} = new {elementTypeName}[__count];");
+        sb.AppendLine($"{indentPrefix}for (var i = 0; i < __count; i++)");
+        sb.AppendLine($"{indentPrefix}{{");
+
+        if (GeneratorContext.IsCustomType(elementType))
+        {
+            // Build a full initializer for the element to support both classes and structs
+            var init = GetLineForInitializer(elementType, ref staticByteIndex, dynamicOffset,
+                $" + {varLenField.ElementSize} * i", $"{indentPrefix}    ", true, isStreamMode);
+            sb.AppendLine($"{indentPrefix}    {arrVar}[i] = {init};");
+        }
+        else if (elementType is INamedTypeSymbol primitiveType)
+        {
+            var valueLine = GetValueForSingleValue(varLenField, primitiveType, ref staticByteIndex,
+                dynamicOffset, $" + {varLenField.ElementSize} * i", isStreamMode);
+            sb.AppendLine($"{indentPrefix}    {arrVar}[i] = {valueLine};");
+        }
+        else
+        {
+            throw new ArgumentException($"Unsupported variable length element type: {elementTypeName}");
+        }
+
+        sb.AppendLine($"{indentPrefix}}}");
 
         return sb.ToString();
     }
@@ -398,8 +442,8 @@ internal class DeserializeGenerator
             var variableName = GetVariableNameForExpression(field.Name);
             if (GeneratorContext.IsCustomType(arr.ElementType))
             {
-                var type = _context.GetTypeDeclaration(arr.ElementType);
-                var subFields = _context.GetFieldsOfType(type);
+                var type = context.GetTypeDeclaration(arr.ElementType);
+                var subFields = context.GetFieldsOfType(type);
                 foreach (var subField in subFields)
                 {
                     var line = GetMethodLine(subField, ref offset, dynamicOffset,
@@ -476,11 +520,11 @@ internal class DeserializeGenerator
     {
         var sb = new StringBuilder();
 
-        var type = _context.GetTypeDeclaration(t);
-        sb.Append($"new {_context.GetTypeInfo(type).GetFullName()}");
+        var type = context.GetTypeDeclaration(t);
+        sb.Append($"new {context.GetTypeInfo(type).GetFullName()}");
 
         // recursive call to generate lines for each field in sub type
-        var members = _context.GetFieldsOfType(type);
+        var members = context.GetFieldsOfType(type);
         var recordParamMembers = members.Where(x => x.IsRecordParameter).ToArray();
         var propertyMembers = members.Where(x => !x.IsReadonly && !x.IsRecordParameter).ToArray();
         if (recordParamMembers.Length > 0)

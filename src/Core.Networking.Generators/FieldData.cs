@@ -26,6 +26,10 @@ internal class FieldData
     public bool IsRecordParameter { get; set; }
     public bool IsReadonly { get; set; }
 
+    // Variable length packet support
+    public bool IsPacketSize { get; set; }
+    public bool IsVarLen { get; set; }
+
     public string GetVariableName()
     {
         return $"__{Name[0].ToString().ToLower()}{Name.Substring(1)}";

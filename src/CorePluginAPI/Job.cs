@@ -1,4 +1,4 @@
-﻿using QuantumCore.API.Game.Types;
+using QuantumCore.API.Game.Types;
 
 namespace QuantumCore.API;
 
@@ -14,5 +14,7 @@ public class Job
     public uint SpPerIq { get; set; }
     public uint HpPerLevel { get; set; }
     public uint SpPerLevel { get; set; }
-    public EPoints AttackStatus { get; set; }
+    public uint MaxStamina { get; set; }
+    public uint StaminaPerHt { get; set; }
+    public EPoint AttackStatus { get; set; }
 }

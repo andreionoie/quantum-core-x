@@ -8,6 +8,7 @@ public interface IGameConnection : IConnection
 {
     IServerBase Server { get; }
     IPAddress BoundIpAddress { get; }
+    IPEndPoint RemoteEndpoint { get;  }
     Guid? AccountId { get; set; }
     string Username { get; set; }
     IPlayerEntity? Player { get; set; }

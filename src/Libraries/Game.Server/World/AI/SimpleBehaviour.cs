@@ -5,6 +5,9 @@ using EnumsNET;
 using QuantumCore.API;
 using QuantumCore.API.Core.Models;
 using QuantumCore.API.Game.Types;
+using QuantumCore.API.Game.Types.Combat;
+using QuantumCore.API.Game.Types.Monsters;
+using QuantumCore.API.Game.Types.Skills;
 using QuantumCore.API.Game.World;
 using QuantumCore.API.Game.World.AI;
 using QuantumCore.Core.Utils;
@@ -352,7 +355,10 @@ namespace QuantumCore.Game.World.AI
             monster.Rotation =
                 (float)MathUtils.Rotation(victim.PositionX - monster.PositionX, victim.PositionY - monster.PositionY);
 
-            monster.Attack(victim);
+            if (!monster.TryAttack(victim))
+            {
+                return;
+            }
 
             // Send attack packet
             var packet = new CharacterMoveOut
@@ -434,9 +440,15 @@ namespace QuantumCore.Game.World.AI
 
         public void OnNewNearbyEntity(IEntity entity)
         {
-            if (IsAggressive && entity is IPlayerEntity && Target is null)
+            if (IsAggressive && entity is IPlayerEntity player && Target is null)
             {
-                // TODO: respect stealth/invisibility affects, aggressive sight radius gating before locking
+                // TODO: respect aggressive sight radius gating before locking
+                if (player.Affects.GetActiveFlags()
+                    .HasAnyFlags(EAffectFlags.Invisibility | EAffectFlags.InvisibleRespawn | EAffectFlags.Stealth))
+                {
+                    return;
+                }
+                
                 Target = entity;
             }
         }

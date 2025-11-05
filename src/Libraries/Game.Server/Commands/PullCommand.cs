@@ -9,10 +9,11 @@ namespace QuantumCore.Game.Commands;
 [Command("pull_monster", "All monsters in range will quickly move towards you")]
 public class PullCommand : ICommandHandler
 {
+    private const int MaxDistance = 3000;
+    private const int MinDistance = 100;
+    
     public Task ExecuteAsync(CommandContext context)
     {
-        const int maxDistance = 3000;
-        const int minDistance = 100;
         var p = context.Player;
         context.Player.ForEachNearbyEntity(e =>
         {
@@ -20,17 +21,15 @@ public class PullCommand : ICommandHandler
             {
                 var dist = Vector2.Distance(new Vector2(p.PositionX, p.PositionY),
                     new Vector2(e.PositionX, e.PositionY));
-                if (dist is > maxDistance or < minDistance)
+                if (dist is > MaxDistance or < MinDistance)
                     return;
 
                 var degree = MathUtils.Rotation(p.PositionX - e.PositionX, p.PositionY - e.PositionY);
 
-                var pos = MathUtils.GetDeltaByDegree(degree);
-                var targetX = p.PositionX + pos.X + dist;
-                var targetY = p.PositionY + pos.Y + dist;
-                // not correct - moves to the wrong side of the player
-                // sadly my math skills are too low to implement it correctly
-                // good enough for now
+                var direction = MathUtils.GetDeltaByDegree(degree);
+                var targetX = p.PositionX - direction.X * MinDistance;
+                var targetY = p.PositionY - direction.Y * MinDistance;
+
                 e.Goto((int)targetX, (int)targetY);
             }
         });

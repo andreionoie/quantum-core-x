@@ -13,6 +13,8 @@ namespace QuantumCore.Game.PlayerUtils
         {
             _logger = logger;
 
+            // TODO: do we want to force jobs.json to be populated exactly in the order of EPlayerClassGendered?
+            // or we can switch to Dictionary<EPlayerClass, Job> as gender shouldn't matter anyway for this config
             var jobs = configuration.GetSection("job").Get<Job[]>();
 
             if (jobs is not null)

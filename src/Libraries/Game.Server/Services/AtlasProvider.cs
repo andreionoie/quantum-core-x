@@ -18,7 +18,7 @@ internal partial class AtlasProvider : IAtlasProvider
     [
         new("metin2_map_a1", new Coordinates(409600, 896000), 4, 5),
         new("metin2_map_b1", new Coordinates(0, 102400), 4, 5),
-        new("metin2_map_a1", new Coordinates(921600, 204800), 4, 5),
+        new("metin2_map_c1", new Coordinates(921600, 204800), 4, 5),
     ];
 
     private readonly IConfiguration _configuration;

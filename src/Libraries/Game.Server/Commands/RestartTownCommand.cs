@@ -8,6 +8,7 @@ public class RestartTownCommand : ICommandHandler
 {
     public Task ExecuteAsync(CommandContext context)
     {
+        // TODO: minimum wait time after death 6-7 seconds
         context.Player.Respawn(true);
         return Task.CompletedTask;
     }

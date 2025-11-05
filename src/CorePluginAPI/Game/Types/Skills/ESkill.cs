@@ -1,0 +1,110 @@
+﻿namespace QuantumCore.API.Game.Types.Skills;
+
+public enum ESkill : uint
+{
+    // Warrior Body
+    ThreeWayCut = 1,
+    SwordSpin = 2,
+    BerserkerFury = 3,
+    AuraOfTheSword = 4,
+    Dash = 5,
+    Life = 6,
+
+    // Warrior Mind
+    Shockwave = 16,
+    Bash = 17,
+    Stump = 18,
+    StrongBody = 19,
+    SwordStrike = 20,
+    SwordOrb = 21,
+
+    // Ninja Dagger
+    Ambush = 31,
+    FastAttack = 32,
+    RollingDagger = 33,
+    Stealth = 34,
+    PoisonousCloud = 35,
+    InsidiousPoison = 36,
+
+    // Ninja Bow
+    RepetitiveShot = 46,
+    ArrowShower = 47,
+    FireArrow = 48,
+    FeatherWalk = 49,
+    PoisonArrow = 50,
+    Spark = 51,
+
+    // Sura Weapons
+    FingerStrike = 61,
+    DragonSwirl = 62,
+    EnchantedBlade = 63,
+    Fear = 64,
+    EnchantedArmor = 65,
+    Dispel = 66,
+
+    // Sura Magic
+    DarkStrike = 76,
+    FlameStrike = 77,
+    FlameSpirit = 78,
+    DarkProtection = 79,
+    SpiritStrike = 80,
+    DarkOrb = 81,
+
+    // Shaman Dragon
+    FlyingTalisman = 91,
+    ShootingDragon = 92,
+    DragonRoar = 93,
+    Blessing = 94,
+    Reflect = 95,
+    DragonAid = 96,
+
+    // Shaman Lightning
+    LightningThrow = 106,
+    SummonLightning = 107,
+    LightningClaw = 108,
+    Cure = 109,
+    Swiftness = 110,
+    AttackUp = 111,
+
+    // Passive Skills
+    Leadership = 121,
+    Combo = 122,
+    Fishing = 123,
+    Mining = 124,
+    SupportItemCreation = 125,
+    LanguageShinsoo = 126,
+    LanguageChunjo = 127,
+    LanguageJinno = 128,
+    Polymorph = 129,
+
+    HorseRiding = 130,
+    HorseSummon = 131,
+    HorseWildAttack = 137,
+    HorseCharge = 138,
+    HorseEscape = 139,
+    HorseWildAttackRange = 140,
+
+    AddHp = 141,
+    PenetrationResistance = 142,
+
+    GuildEye = 151,
+    GuildBlood = 152,
+    GuildBless = 153,
+    GuildSeonghwi = 154,
+    GuildAcceleration = 155,
+    GuildBunno = 156,
+    GuildJumun = 157,
+    GuildTeleport = 158,
+    GuildDoor = 159,
+    GuildAccelerationEffect = 160,
+    GuildSpaceDoor = 161,
+    GuildMassTeleport = 162,
+
+    Crush200Skill = 256,
+    NormalArea350Skill = 257,
+    Crush300Skill = 258,
+    NormalArea200Skill = 259,
+    Crush400Skill = 260,
+    Poison250Skill = 261,
+    Slow300Skill = 262
+}

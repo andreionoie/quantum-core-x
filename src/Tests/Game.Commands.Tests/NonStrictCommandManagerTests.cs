@@ -45,6 +45,6 @@ public class NonStrictCommandManagerTests
         _commandManager.Register(typeof(SetJobCommand).Namespace!, typeof(SetJobCommand).Assembly);
         await _commandManager.Handle(_connection, "/setjob b");
 
-        _chatInfos.Should().BeEquivalentTo(["Comannd validation failed:", "  value pos. 0    Required."]);
+        _chatInfos.Should().BeEquivalentTo(["Command validation failed:", "  value pos. 0    Required."]);
     }
 }

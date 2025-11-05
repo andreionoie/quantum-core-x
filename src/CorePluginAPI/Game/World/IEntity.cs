@@ -1,5 +1,6 @@
 ﻿using QuantumCore.API.Core.Utils;
 using QuantumCore.API.Game.Types;
+using QuantumCore.API.Game.Types.Combat;
 
 namespace QuantumCore.API.Game.World
 {
@@ -66,7 +67,7 @@ namespace QuantumCore.API.Game.World
         byte MovementSpeed { get; set; }
         byte AttackSpeed { get; set; }
 
-        public uint GetPoint(EPoints point);
+        public uint GetPoint(EPoint point);
         public int GetMinDamage();
         public int GetMaxDamage();
         public int GetBonusDamage();
@@ -74,7 +75,7 @@ namespace QuantumCore.API.Game.World
         public void Goto(int x, int y);
         public void Wait(int x, int y);
 
-        public void Attack(IEntity victim);
+        public bool TryAttack(IEntity victim);
         public int Damage(IEntity attacker, EDamageType damageType, int damage);
 
         public void Move(int x, int y);

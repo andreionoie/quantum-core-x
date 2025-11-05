@@ -13,8 +13,7 @@ namespace QuantumCore.Game.Packets
             Attack = 2,
             Combo = 3,
             MobSkill = 4,
-            Max = 6,
-            Skill = 0x80
+            SkillBitFlag = 1 << 7
         }
 
         [Field(0)] public byte MovementType { get; set; }

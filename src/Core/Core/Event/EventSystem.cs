@@ -1,4 +1,4 @@
-﻿// using Prometheus; // TODO
+// using Prometheus; // TODO
 
 namespace QuantumCore.Core.Event
 {
@@ -59,13 +59,15 @@ namespace QuantumCore.Core.Event
         /// <param name="timeout">
         /// Time in milliseconds until the event is executed
         /// </param>
-        public static void EnqueueEvent(Func<int> callback, int timeout)
+        /// <returns>The event ID that can be used to cancel the event</returns>
+        public static long EnqueueEvent(Func<int> callback, int timeout)
         {
             lock (PendingEvents)
             {
                 var id = _nextEventId++;
                 var evt = new Event(id, timeout) { Callback = callback };
                 PendingEvents[id] = evt;
+                return id;
             }
         }
         
@@ -73,11 +75,11 @@ namespace QuantumCore.Core.Event
         /// Cancels the given event for further execution.
         /// </summary>
         /// <param name="eventId">Event ID to cancel</param>
-        public static void CancelEvent(long eventId)
+        public static bool CancelEvent(long eventId)
         {
             lock (PendingEvents)
             {
-                PendingEvents.Remove(eventId);
+                return PendingEvents.Remove(eventId);
             }
         }
     }

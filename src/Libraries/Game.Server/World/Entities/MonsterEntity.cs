@@ -3,20 +3,30 @@ using Microsoft.Extensions.Logging;
 using QuantumCore.API;
 using QuantumCore.API.Core.Models;
 using QuantumCore.API.Game.Types;
+using QuantumCore.API.Game.Types.Combat;
+using QuantumCore.API.Game.Types.Monsters;
+using QuantumCore.API.Game.Types.Skills;
 using QuantumCore.API.Game.World;
 using QuantumCore.API.Game.World.AI;
+using QuantumCore.API.Systems.Affects;
+using QuantumCore.API.Systems.Stats;
 using QuantumCore.Core.Utils;
 using QuantumCore.Game.Packets;
 using QuantumCore.Game.Services;
 using QuantumCore.Game.World.AI;
+using QuantumCore.Game.Systems.Tickers;
+using QuantumCore.API.Systems.Tickers;
+using QuantumCore.Game.Extensions;
+using static QuantumCore.API.Game.Types.Combat.EImmunityFlags;
 
 namespace QuantumCore.Game.World.Entities
 {
-    public class MonsterEntity : Entity
+    public class MonsterEntity : Entity, IMonsterEntity
     {
+        private readonly StatEngine _stats;
         private readonly IDropProvider _dropProvider;
         private readonly ILogger _logger;
-        public override EEntityType Type => EEntityType.Monster;
+        public override EEntityType Type => (EEntityType)Proto.Type;
         public bool IsStone => Proto.Type == (byte)EEntityType.MetinStone;
         public EMonsterLevel Rank => (EMonsterLevel)Proto.Rank;
 
@@ -50,6 +60,8 @@ namespace QuantumCore.Game.World.Entities
             get { return (byte)(Math.Min(Math.Max(Health / (double)Proto.Hp, 0), 1) * 100); }
         }
 
+        public IAffectsController Affects { get; }
+        
         public MonsterData Proto { get; private set; }
 
         public MonsterGroup? Group { get; set; }
@@ -60,6 +72,11 @@ namespace QuantumCore.Game.World.Entities
         private readonly IMap _map;
         private readonly IItemManager _itemManager;
         private IServiceProvider _serviceProvider;
+        
+        private readonly GatedTickerEngine<IMonsterEntity> _affectsTicker;
+        private readonly GatedTickerEngine<IMonsterEntity> _poisonTicker;
+        private readonly GatedTickerEngine<IMonsterEntity> _fireTicker;
+        private readonly MonsterHpPassiveRestoreTicker _hpPassiveRestoreTicker;
 
         public MonsterEntity(IMonsterManager monsterManager, IDropProvider dropProvider,
             IAnimationManager animationManager,
@@ -89,6 +106,19 @@ namespace QuantumCore.Game.World.Entities
 
             Health = Proto.Hp;
             EntityClass = id;
+
+            _stats = new StatEngine(monsterManager.BasePointsForMonster(id));
+            Affects = new AffectsController();
+            Affects.AffectAdded += OnAffectAdded;
+            Affects.AffectRemoved += OnAffectRemoved;
+
+            // initialize computed speeds to match base stats
+            SyncSpeedsFromComputedStats();
+
+            _affectsTicker = new AffectsTicker<IMonsterEntity>(this);
+            _poisonTicker = new PoisonDamageOverTimeTicker<IMonsterEntity>(this);
+            _fireTicker = new FireDamageOverTimeTicker<IMonsterEntity>(this);
+            _hpPassiveRestoreTicker = new MonsterHpPassiveRestoreTicker(this);
 
             if (Proto.Type == (byte)EEntityType.Monster)
             {
@@ -129,6 +159,20 @@ namespace QuantumCore.Game.World.Entities
             }
 
             base.Update(elapsedTime);
+            
+            var hpChanged = false;
+            var elapsed = TimeSpan.FromMilliseconds(elapsedTime);
+            _affectsTicker.Step(elapsed);
+            hpChanged |= _poisonTicker.Step(elapsed);
+            hpChanged |= _fireTicker.Step(elapsed);
+            hpChanged |= _hpPassiveRestoreTicker.Step(elapsed);
+            if (hpChanged)
+            {
+                foreach (var player in TargetedBy)
+                {
+                    player.SendTarget();
+                }
+            }
         }
 
         public override void Goto(int x, int y)
@@ -195,34 +239,117 @@ namespace QuantumCore.Game.World.Entities
             Behaviour?.TookDamage(attacker, 0);
         }
 
-        public override void AddPoint(EPoints point, int value)
+        public override void AddPoint(EPoint point, int value)
         {
         }
 
-        public override void SetPoint(EPoints point, uint value)
+        public override void SetPoint(EPoint point, uint value)
         {
         }
 
-        public override uint GetPoint(EPoints point)
+        public override uint GetPoint(EPoint point)
         {
             switch (point)
             {
-                case EPoints.Level:
-                    return Proto.Level;
-                case EPoints.Dx:
-                    return Proto.Dx;
-                case EPoints.AttackGrade:
-                    return (uint)(Proto.Level * 2 + Proto.St * 2);
-                case EPoints.DefenceGrade:
-                    return (uint)(Proto.Level + Proto.Ht + Proto.Defence);
-                case EPoints.DefenceBonus:
+                #region Runtime State
+                
+                case EPoint.Hp:
+                    return (uint)Health;
+                
+                #endregion
+                
+                #region Bonuses
+                
+                case EPoint.AttackBonus or EPoint.AttackGradeBonus:
+                case EPoint.MagicAttackBonusPer or EPoint.MeleeMagicAttackBonusPer or EPoint.MagicAttackGradeBonus:
+                case EPoint.AttackBonusHuman or EPoint.AttackBonusAnimal or EPoint.AttackBonusOrc
+                    or EPoint.AttackBonusEsoterics or EPoint.AttackBonusUndead or EPoint.AttackBonusDevil
+                    or EPoint.AttackBonusInsect or EPoint.AttackBonusFire or EPoint.AttackBonusIce
+                    or EPoint.AttackBonusDesert or EPoint.AttackBonusMonster or EPoint.AttackBonusWarrior
+                    or EPoint.AttackBonusAssassin or EPoint.AttackBonusSura or EPoint.AttackBonusShaman
+                    or EPoint.AttackBonusTree:
+                case EPoint.DefenceBonus:
                     return 0;
-                case EPoints.Experience:
+                
+                #endregion
+                
+                case EPoint.Level:
+                    return Proto.Level;
+                case EPoint.MaxHp:
+                    return Proto.Hp;
+                case EPoint.St:
+                    return Proto.St;
+                case EPoint.Ht:
+                    return Proto.Ht;
+                case EPoint.Dx:
+                    return Proto.Dx;
+                case EPoint.Iq:
+                    return Proto.Iq;
+                case EPoint.Experience:
                     return Proto.Experience;
+                
+                #region Immunities
+                
+                case EPoint.ImmuneStun:
+                    return ((EImmunityFlags)Proto.ImmuneFlag).HasFlag(StunImmunity) ? 1u : 0;
+                case EPoint.ImmuneSlow:
+                    return ((EImmunityFlags)Proto.ImmuneFlag).HasFlag(SlowImmunity) ? 1u : 0;
+                case EPoint.ImmuneFall:
+                    return ((EImmunityFlags)Proto.ImmuneFlag).HasFlag(FallImmunity) ? 1u : 0;
+                
+                #endregion
+                
+                #region Enchantments
+                
+                case EPoint.PoisonPercentage:
+                    return Proto.Enchantments.ElementAtOrDefault((int)EMonsterEnchantment.Poison);
+                case EPoint.StunPercentage:
+                    return Proto.Enchantments.ElementAtOrDefault((int)EMonsterEnchantment.Stun);
+                case EPoint.SlowPercentage:
+                    return Proto.Enchantments.ElementAtOrDefault((int)EMonsterEnchantment.Slow);
+                case EPoint.CriticalPercentage:
+                    return Proto.Enchantments.ElementAtOrDefault((int)EMonsterEnchantment.Critical);
+                case EPoint.PenetratePercentage:
+                    return Proto.Enchantments.ElementAtOrDefault((int)EMonsterEnchantment.Penetrate);
+                case EPoint.CursePercentage:
+                    return Proto.Enchantments.ElementAtOrDefault((int)EMonsterEnchantment.Curse);
+                
+                #endregion
+
+                #region Resists
+                
+                case EPoint.ResistNormalDamage or EPoint.ResistCritical or EPoint.ResistPenetrate:
+                case EPoint.ResistIce or EPoint.ResistEarth or EPoint.ResistDark:
+                case EPoint.ResistWarrior or EPoint.ResistAssassin or EPoint.ResistSura or EPoint.ResistShaman:
+                    return 0;
+                
+                case EPoint.ResistSword:
+                    return Proto.Resists.ElementAtOrDefault((int)EMonsterResistance.Sword);
+                case EPoint.ResistTwoHanded:
+                    return Proto.Resists.ElementAtOrDefault((int)EMonsterResistance.TwoHanded);
+                case EPoint.ResistDagger:
+                    return Proto.Resists.ElementAtOrDefault((int)EMonsterResistance.Dagger);
+                case EPoint.ResistBell:
+                    return Proto.Resists.ElementAtOrDefault((int)EMonsterResistance.Bell);
+                case EPoint.ResistFan:
+                    return Proto.Resists.ElementAtOrDefault((int)EMonsterResistance.Fan);
+                case EPoint.ResistBow:
+                    return Proto.Resists.ElementAtOrDefault((int)EMonsterResistance.Bow);
+                case EPoint.ResistFire:
+                    return Proto.Resists.ElementAtOrDefault((int)EMonsterResistance.Fire);
+                case EPoint.ResistElectric:
+                    return Proto.Resists.ElementAtOrDefault((int)EMonsterResistance.Electric);
+                case EPoint.ResistMagic:
+                    return Proto.Resists.ElementAtOrDefault((int)EMonsterResistance.Magic);
+                case EPoint.ResistWind:
+                    return Proto.Resists.ElementAtOrDefault((int)EMonsterResistance.Wind);
+                case EPoint.PoisonReduce:
+                    return Proto.Resists.ElementAtOrDefault((int)EMonsterResistance.Poison);
+
+                #endregion
             }
 
-            _logger.LogWarning("Point {Point} is not implemented on monster", point);
-            return 0;
+            return (uint)_stats[point];
         }
 
         public override void Die()
@@ -244,6 +371,14 @@ namespace QuantumCore.Game.World.Entities
                     player.Connection.Send(dead);
                 }
             }
+
+            // clear target UI for all players targeting this entity
+            var clearTargetPacket = new SetTarget { TargetVid = 0 };
+            foreach (var targetingPlayer in TargetedBy)
+            {
+                targetingPlayer.Connection.Send(clearTargetPacket);
+            }
+            TargetedBy.Clear();
         }
 
         private void CalculateDrops()
@@ -326,7 +461,10 @@ namespace QuantumCore.Game.World.Entities
                 PositionY = PositionY,
                 Class = (ushort)Proto.Id,
                 MoveSpeed = (byte)Proto.MoveSpeed,
-                AttackSpeed = (byte)Proto.AttackSpeed
+                AttackSpeed = (byte)Proto.AttackSpeed,
+                Affects = (ulong)Affects.GetActiveFlags()
+                // TODO: animation on spawn with State = ESpawnStateFlags.WithFallingAnimation
+                // TODO: particle effect on spawn with Affects = EAffectFlags.SpawnWithAppearFx
             });
 
             if (Proto.Type == (byte)EEntityType.Npc)
@@ -348,6 +486,49 @@ namespace QuantumCore.Game.World.Entities
         public override string ToString()
         {
             return $"{Proto.TranslatedName?.Trim((char)0x00)} ({Proto.Id})";
+        }
+
+
+        private void OnAffectAdded(EntityAffect affect)
+        {
+            if (affect.ModifiedPointId != EPoint.None && affect.ModifiedPointDelta != 0)
+            {
+                _stats[affect.ModifiedPointId] += (affect.ModifiedPointDelta, affect);
+                SyncSpeedsFromComputedStats();
+            }
+            BroadcastAffectFlags();
+        }
+
+        private void OnAffectRemoved(EntityAffect affect)
+        {
+            if (affect.ModifiedPointId != EPoint.None)
+            {
+                if (_stats[affect.ModifiedPointId].RemoveModifier(affect))
+                {
+                    SyncSpeedsFromComputedStats();
+                }
+            }
+            BroadcastAffectFlags();
+        }
+
+        private void SyncSpeedsFromComputedStats()
+        {
+            AttackSpeed = (byte)Math.Clamp(_stats[EPoint.AttackSpeed], 0, byte.MaxValue);
+            MovementSpeed = (byte)Math.Clamp(_stats[EPoint.MoveSpeed], 0, byte.MaxValue);
+        }
+
+        private void BroadcastAffectFlags()
+        {
+            var updatePacket = new CharacterUpdate
+            {
+                Vid = Vid,
+                MoveSpeed = MovementSpeed,
+                AttackSpeed = AttackSpeed,
+                Affects = (ulong)Affects.GetActiveFlags(),
+                State = (byte)State
+            };
+
+            this.BroadcastNearby(updatePacket);
         }
     }
 }

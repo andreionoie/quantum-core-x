@@ -2,11 +2,16 @@
 using QuantumCore.API.Core.Models;
 using QuantumCore.API.Core.Utils;
 using QuantumCore.API.Game.Types;
+using QuantumCore.API.Game.Types.Combat;
 using QuantumCore.API.Game.World;
-using QuantumCore.Core.Constants;
+using QuantumCore.API.Game.Types.Skills;
 using QuantumCore.Core.Utils;
+using QuantumCore.Game.Constants;
 using QuantumCore.Game.Extensions;
 using QuantumCore.Game.Packets;
+using QuantumCore.API.Systems.Affects;
+using static QuantumCore.API.Game.Types.Combat.EImmunityFlags;
+using static QuantumCore.Game.Constants.SchedulingConstants;
 
 namespace QuantumCore.Game.World.Entities
 {
@@ -85,6 +90,9 @@ namespace QuantumCore.Game.World.Entities
         private bool _positionChanged;
         protected PlayerEntity? LastAttacker { get; private set; }
 
+        // when set, entity is in knockout phase and will be dead shortly after
+        private long? _knockedOutServerTime;
+
         public Entity(IAnimationManager animationManager, uint vid)
         {
             _animationManager = animationManager;
@@ -99,6 +107,12 @@ namespace QuantumCore.Game.World.Entities
 
         public virtual void Update(double elapsedTime)
         {
+            if (!Dead && _knockedOutServerTime.HasValue && GameServer.Instance.ServerTime >= _knockedOutServerTime.Value + KnockoutToDeathDelaySeconds * 1000)
+            {
+                _knockedOutServerTime = null;
+                Die();
+            }
+
             if (State == EEntityState.Moving)
             {
                 var elapsed = GameServer.Instance.ServerTime - MovementStart;
@@ -120,6 +134,10 @@ namespace QuantumCore.Game.World.Entities
 
         public virtual void Move(int x, int y)
         {
+            if (_knockedOutServerTime.HasValue || (this is IAffectable a && a.Affects.GetActiveFlags().Has(EAffect.Stun)))
+            {
+                return;
+            }
             if (PositionX == x && PositionY == y) return;
 
             PositionX = x;
@@ -131,11 +149,15 @@ namespace QuantumCore.Game.World.Entities
 
         public virtual void Goto(int x, int y)
         {
+            if (_knockedOutServerTime.HasValue || (this is IAffectable a && a.Affects.GetActiveFlags().Has(EAffect.Stun)))
+            {
+                return;
+            }
             if (PositionX == x && PositionY == y) return;
             if (TargetPositionX == x && TargetPositionY == y) return;
 
             var animation =
-                _animationManager.GetAnimation(EntityClass, AnimationType.Run, AnimationSubType.General);
+                _animationManager.GetAnimation(EntityClass, GetMovementAnimationType(), AnimationSubType.General);
 
             State = EEntityState.Moving;
             TargetPositionX = x;
@@ -145,31 +167,38 @@ namespace QuantumCore.Game.World.Entities
             MovementStart = GameServer.Instance.ServerTime;
 
             var distance = MathUtils.Distance(StartPositionX, StartPositionY, TargetPositionX, TargetPositionY);
-            if (animation == null)
+            double animationSpeed;
+            if (animation is not null)
             {
-                MovementDuration = 0;
+                animationSpeed = -animation.AccumulationY / animation.MotionDuration;
             }
             else
             {
-                var animationSpeed = -animation.AccumulationY / animation.MotionDuration;
-                var i = 100 - MovementSpeed;
-                if (i > 0)
-                {
-                    i = 100 + i;
-                }
-                else if (i < 0)
-                {
-                    i = 10000 / (100 - i);
-                }
-                else
-                {
-                    i = 100;
-                }
-
-                var duration = (int)((distance / animationSpeed) * 1000) * i / 100;
-                MovementDuration = (uint)duration;
+                // fallback duration when animation data is missing: approximate by movement speed
+                // base speed: at MovementSpeed 100, travel 1000 units per second
+                const double BaseUnitsPerSecondAt100 = 1000.0;
+                animationSpeed = BaseUnitsPerSecondAt100;
             }
+
+            var i = 100 - MovementSpeed;
+            if (i > 0)
+            {
+                i = 100 + i;
+            }
+            else if (i < 0)
+            {
+                i = 10000 / (100 - i);
+            }
+            else
+            {
+                i = 100;
+            }
+
+            var duration = (int)((distance / animationSpeed) * 1000) * i / 100;
+            MovementDuration = (uint)duration;
         }
+
+        protected virtual AnimationType GetMovementAnimationType() => AnimationType.Run;
 
         public virtual void Wait(int x, int y)
         {
@@ -188,20 +217,24 @@ namespace QuantumCore.Game.World.Entities
         public abstract int GetMinDamage();
         public abstract int GetMaxDamage();
         public abstract int GetBonusDamage();
-        public abstract void AddPoint(EPoints point, int value);
-        public abstract void SetPoint(EPoints point, uint value);
-        public abstract uint GetPoint(EPoints point);
+        public abstract void AddPoint(EPoint point, int value);
+        public abstract void SetPoint(EPoint point, uint value);
+        public abstract uint GetPoint(EPoint point);
 
-        public void Attack(IEntity victim)
+        public bool TryAttack(IEntity victim)
         {
+            if (_knockedOutServerTime.HasValue || (this is IAffectable a && a.Affects.GetActiveFlags().Has(EAffect.Stun)))
+            {
+                return false;
+            }
             if (this.PositionIsAttr(EMapAttribute.NonPvp))
             {
-                return;
+                return false;
             }
 
             if (victim.PositionIsAttr(EMapAttribute.NonPvp))
             {
-                return;
+                return false;
             }
 
             switch (GetBattleType())
@@ -222,44 +255,15 @@ namespace QuantumCore.Game.World.Entities
                     // todo magic attack
                     break;
             }
+
+            // TODO: add validation and return true only if attacks were successful above
+            return true;
         }
 
         private void MeleeAttack(IEntity victim)
         {
             // todo verify victim is in range
-
-            var attackerRating = Math.Min(90, (GetPoint(EPoints.Dx) * 4 + GetPoint(EPoints.Level) * 2) / 6);
-            var victimRating = Math.Min(90, (victim.GetPoint(EPoints.Dx) * 4 + victim.GetPoint(EPoints.Level) * 2) / 6);
-            var attackRating = (attackerRating + 210.0) / 300.0 -
-                               (victimRating * 2 + 5) / (victimRating + 95) * 3.0 / 10.0;
-
-            var minDamage = GetMinDamage();
-            var maxDamage = GetMaxDamage();
-
-            var damage = CoreRandom.GenerateInt32(minDamage, maxDamage + 1) * 2;
-            SendDebugDamage(victim, $"{this}->{victim} Base Attack value: {damage}");
-            var attack = (int)(GetPoint(EPoints.AttackGrade) + damage - GetPoint(EPoints.Level) * 2);
-            attack = (int)Math.Floor(attack * attackRating);
-            attack += (int)GetPoint(EPoints.Level) * 2 + GetBonusDamage() * 2;
-            attack *= (int)((100 + GetPoint(EPoints.AttackBonus) + GetPoint(EPoints.MagicAttackBonus)) / 100);
-            attack = CalculateAttackBonus(victim, attack);
-            SendDebugDamage(victim, $"{this}->{victim} With bonus and level {attack}");
-
-            var defence = (int)(victim.GetPoint(EPoints.DefenceGrade) * (100 + victim.GetPoint(EPoints.DefenceBonus)) /
-                                100);
-            SendDebugDamage(victim, $"{this}->{victim} Base defence: {defence}");
-            if (this is MonsterEntity thisMonster)
-            {
-                attack = (int)Math.Floor(attack * thisMonster.Proto.DamageMultiply);
-            }
-
-            damage = Math.Max(0, attack - defence);
-            SendDebugDamage(victim, $"{this}->{victim} Melee damage: {damage}");
-            if (damage < 3)
-            {
-                damage = CoreRandom.GenerateInt32(1, 6);
-            }
-
+            var damage = ScalingFormulas.ComputeMeleeDamage(this, victim);
             // todo reduce damage by weapon type resist
 
             victim.Damage(this, EDamageType.Normal, damage);
@@ -268,35 +272,7 @@ namespace QuantumCore.Game.World.Entities
         private void RangeAttack(IEntity victim)
         {
             // todo verify victim is in range
-
-            var attackerRating = Math.Min(90, (GetPoint(EPoints.Dx) * 4 + GetPoint(EPoints.Level) * 2) / 6);
-            var victimRating = Math.Min(90, (victim.GetPoint(EPoints.Dx) * 4 + victim.GetPoint(EPoints.Level) * 2) / 6);
-            var attackRating = (attackerRating + 210.0) / 300.0 -
-                               (victimRating * 2 + 5) / (victimRating + 95) * 3.0 / 10.0;
-
-            var minDamage = GetMinDamage();
-            var maxDamage = GetMaxDamage();
-
-            var damage = CoreRandom.GenerateInt32(minDamage, maxDamage + 1) * 2;
-            var attack = (int)(GetPoint(EPoints.AttackGrade) + damage - GetPoint(EPoints.Level) * 2);
-            attack = (int)Math.Floor(attack * attackRating);
-            attack += (int)GetPoint(EPoints.Level) * 2 + GetBonusDamage() * 2;
-            attack *= (int)((100 + GetPoint(EPoints.AttackBonus) + GetPoint(EPoints.MagicAttackBonus)) / 100);
-            attack = CalculateAttackBonus(victim, attack);
-
-            var defence = (int)(victim.GetPoint(EPoints.DefenceGrade) * (100 + victim.GetPoint(EPoints.DefenceBonus)) /
-                                100);
-            if (this is MonsterEntity thisMonster)
-            {
-                attack = (int)Math.Floor(attack * thisMonster.Proto.DamageMultiply);
-            }
-
-            damage = Math.Max(0, attack - defence);
-            if (damage < 3)
-            {
-                damage = CoreRandom.GenerateInt32(1, 6);
-            }
-
+            var damage = ScalingFormulas.ComputeMeleeDamage(this, victim);
             // todo reduce damage by weapon type resist
 
             foreach (var player in NearbyEntities.Where(x => x is IPlayerEntity).Cast<IPlayerEntity>())
@@ -310,26 +286,10 @@ namespace QuantumCore.Game.World.Entities
             victim.Damage(this, EDamageType.NormalRange, damage);
         }
 
-        /// <summary>
-        /// Adds bonus to the attack value for race bonus etc
-        /// </summary>
-        /// <param name="victim">The victim of the damage</param>
-        /// <param name="attack">The current attack value</param>
-        /// <returns>The new attack value with the bonus</returns>
-        private int CalculateAttackBonus(IEntity victim, int attack)
-        {
-            // todo implement bonus attack against animals etc...
-            // todo implement bonus attack against warriors etc...
-            // todo implement resist again warriors etc...
-            // todo implement resist against fire etc...
-
-            return attack;
-        }
-
         private int CalculateExperience(uint playerLevel)
         {
-            var baseExp = GetPoint(EPoints.Experience);
-            var entityLevel = GetPoint(EPoints.Level);
+            var baseExp = GetPoint(EPoint.Experience);
+            var entityLevel = GetPoint(EPoint.Level);
 
             var percentage = ExperienceConstants.GetExperiencePercentageByLevelDifference(playerLevel, entityLevel);
 
@@ -355,13 +315,33 @@ namespace QuantumCore.Game.World.Entities
             if (this.PositionIsAttr(EMapAttribute.NonPvp))
             {
                 SendDebugDamage(attacker,
-                    $"{attacker}->{this} Ignoring damage inside NoPvP zone -> {damage} (should never happen)");
+                    $"{attacker}->{this} Ignoring damage inside NoPvP zone -> {damage}");
                 return -1;
             }
-            
-            if (damageType is not EDamageType.Normal and not EDamageType.NormalRange)
+
+            // DoT types do not crit/penetrate
+            if (damageType is EDamageType.Poison or EDamageType.Fire)
             {
-                throw new NotImplementedException();
+                // Poison does not kill
+                if (damageType == EDamageType.Poison && Health - damage <= 0)
+                {
+                    damage = (int)Math.Max(0, Health - 1);
+                }
+
+                // deliver damage immediately without further calculations
+                ApplyDamageAndBroadcast(attacker, damage, 
+                    damageType == EDamageType.Poison ? EDamageFlags.Poison : EDamageFlags.Normal);
+                return damage;
+            }
+            
+            if (damageType is EDamageType.Normal or EDamageType.NormalRange)
+            {
+                TryApplyOnHitDebuffs(attacker);
+            }
+            else
+            {
+                // For other damage types (Melee, Range, Magic, etc.), proceed without on-hit affects
+                // throw new NotImplementedException();
             }
 
             // todo block
@@ -370,74 +350,84 @@ namespace QuantumCore.Game.World.Entities
 
             SendDebugDamage(attacker, $"{attacker}->{this} Base Damage: {damage}");
 
-            var isCritical = false;
-            var isPenetrate = false;
+            var damageFlags = EDamageFlags.Normal;
 
-            var criticalPercentage = attacker.GetPoint(EPoints.CriticalPercentage);
+            var criticalPercentage = (int)attacker.GetPoint(EPoint.CriticalPercentage);
             if (criticalPercentage > 0)
             {
-                var resist = GetPoint(EPoints.ResistCritical);
-                criticalPercentage = resist > criticalPercentage ? 0 : criticalPercentage - resist;
-                if (CoreRandom.PercentageCheck(criticalPercentage))
+                var resist = (int)GetPoint(EPoint.ResistCritical);
+                if (CoreRandom.PercentageCheck(criticalPercentage - resist))
                 {
-                    isCritical = true;
+                    damageFlags |= EDamageFlags.Critical;
                     damage *= 2;
-                    // todo send effect to clients
+                    if (this is IAffectable affectable)
+                    {
+                        affectable.Affects.RemoveAllOfType(AffectType.FromSkill(ESkill.DarkProtection));
+                    }
                     SendDebugDamage(attacker,
-                        $"{attacker}->{this} Critical hit -> {damage} (percentage was {criticalPercentage})");
+                        $"{attacker}->{this} Critical hit -> {damage} (percentage was {criticalPercentage - resist})");
                 }
             }
 
-            var penetratePercentage = attacker.GetPoint(EPoints.PenetratePercentage);
+            var penetratePercentage = (int)attacker.GetPoint(EPoint.PenetratePercentage);
             // todo add penetrate chance from passive
             if (penetratePercentage > 0)
             {
-                var resist = GetPoint(EPoints.ResistPenetrate);
-                penetratePercentage = resist > penetratePercentage ? 0 : penetratePercentage - resist;
-                if (CoreRandom.PercentageCheck(penetratePercentage))
+                var resist = (int)GetPoint(EPoint.ResistPenetrate);
+                if (CoreRandom.PercentageCheck(penetratePercentage - resist))
                 {
-                    isPenetrate = true;
-                    damage += (int)(GetPoint(EPoints.DefenceGrade) * (100 + GetPoint(EPoints.DefenceBonus)) / 100);
+                    damageFlags |= EDamageFlags.Piercing;
+                    damage += (int)GetPoint(EPoint.Defence);
+                    if (this is IAffectable affectable)
+                    {
+                        affectable.Affects.RemoveAllOfType(AffectType.FromSkill(ESkill.DarkProtection));
+                    }
                     SendDebugDamage(attacker,
-                        $"{attacker}->{this} Penetrate hit -> {damage} (percentage was {penetratePercentage})");
+                        $"{attacker}->{this} Penetrate hit -> {damage} (percentage was {penetratePercentage - resist})");
                 }
             }
 
             // todo calculate hp steal, sp steal, hp recovery, sp recovery and mana burn
+            // todo modify damage by active skill buffs/debuffs
 
-            byte damageFlags = 1; // 1 = normal
-            if (isCritical)
+            ApplyDamageAndBroadcast(attacker, damage, damageFlags);
+            return damage;
+        }
+
+        private void ApplyDamageAndBroadcast(IEntity attacker, int damage, EDamageFlags damageFlags)
+        {
+            if (damageFlags.HasFlag(EDamageFlags.Critical))
             {
-                damageFlags |= 32;
+                this.BroadcastCharacterFx(ECharacterFx.Critical);
             }
 
-            if (isPenetrate)
+            if (damageFlags.HasFlag(EDamageFlags.Piercing))
             {
-                damageFlags |= 16;
+                this.BroadcastCharacterFx(ECharacterFx.Penetrate);
             }
-
+            
             var victimPlayer = this as PlayerEntity;
             var attackerPlayer = attacker as PlayerEntity;
-            if (victimPlayer != null || attackerPlayer != null)
+            var damageInfo = new DamageInfo
             {
-                var damageInfo = new DamageInfo();
-                damageInfo.Vid = Vid;
-                damageInfo.Damage = damage;
-                damageInfo.DamageFlags = damageFlags;
+                Vid = Vid,
+                Damage = damage,
+                DamageFlags = (byte)damageFlags
+            };
 
-                if (victimPlayer != null)
-                {
-                    victimPlayer.Connection.Send(damageInfo);
-                }
+            if (victimPlayer != null)
+            {
+                victimPlayer.Connection.Send(damageInfo);
+            }
 
-                if (attackerPlayer != null)
-                {
-                    attackerPlayer.Connection.Send(damageInfo);
-                    LastAttacker = attackerPlayer;
-                }
+            if (attackerPlayer != null)
+            {
+                attackerPlayer.Connection.Send(damageInfo);
+                LastAttacker = attackerPlayer;
             }
 
             this.Health -= damage;
+
             if (victimPlayer != null)
             {
                 victimPlayer.SendPoints();
@@ -450,16 +440,93 @@ namespace QuantumCore.Game.World.Entities
 
             if (Health <= 0)
             {
-                Die();
-                if (Type != EEntityType.Player && attackerPlayer is not null)
+                if (!_knockedOutServerTime.HasValue)
                 {
-                    var exp = CalculateExperience(attackerPlayer.GetPoint(EPoints.Level));
-                    attackerPlayer.AddPoint(EPoints.Experience, exp);
-                    attackerPlayer.SendPoints();
+                    this.BroadcastNearby(new KnockoutCharacter { Vid = Vid });
+
+                    _knockedOutServerTime = GameServer.Instance.ServerTime;
+                }
+            }
+        }
+
+        private void TryApplyOnHitDebuffs(IEntity attacker)
+        {
+            if (this is not IAffectable target)
+            {
+                return;
+            }
+
+            #region Poison
+            
+            var poisonChance = (int)attacker.GetPoint(EPoint.PoisonPercentage) - (int)GetPoint(EPoint.PoisonReduce);
+            // if attacker level lower than target, chance to fail
+            if (poisonChance > 0 && attacker.GetPoint(EPoint.Level) < GetPoint(EPoint.Level))
+            {
+                var atkLevelsUnder = GetPoint(EPoint.Level) - attacker.GetPoint(EPoint.Level);
+                uint successPercentage = atkLevelsUnder switch
+                {
+                    < 3 => 100 - 10 * atkLevelsUnder,        // 0: 100%, 1: 90%, 2: 80%
+                    < 7 =>  70 - 20 * (atkLevelsUnder - 3),  // 3: 70%, 4: 50%, 5: 30%, 6: 10%
+                    < 9 =>   5,
+                    _ =>     0
+                };
+
+                if (!CoreRandom.PercentageCheck(successPercentage))
+                {
+                    poisonChance = 0;
                 }
             }
 
-            return damage;
+            if (!target.Affects.GetActiveFlags().Has(EAffect.Poison) &&
+                CoreRandom.PercentageCheck(poisonChance))
+            {
+                target.Affects.Upsert(new EntityAffect
+                {
+                    AffectType = AffectType.From(EAffectType.Poison),
+                    AffectFlag = EAffect.Poison,
+                    RemainingDuration = TimeSpan.FromSeconds(DefaultPoisonDurationSeconds),
+                    DoNotPersist = true,
+                    SourceAttackerId = attacker.Vid
+                });
+            }
+            
+            #endregion
+
+            #region Stun
+            
+            if (!this.TryImmunityCheck(StunImmunity) && 
+                CoreRandom.PercentageCheck(attacker.GetPoint(EPoint.StunPercentage)))
+            {
+                Console.WriteLine($"Stunned: {attacker.GetPoint(EPoint.StunPercentage)}");
+                var isPvm = attacker is PlayerEntity && this is MonsterEntity;
+                target.Affects.Upsert(new EntityAffect
+                {
+                    AffectType = AffectType.From(EAffectType.Stun),
+                    AffectFlag = EAffect.Stun,
+                    RemainingDuration = TimeSpan.FromSeconds(isPvm ? PvmStunDurationSeconds : DefaultStunDurationSeconds),
+                    DoNotPersist = true
+                });
+            }
+            
+            #endregion
+
+            #region Slow
+            
+            if (!this.TryImmunityCheck(SlowImmunity) && 
+                CoreRandom.PercentageCheck(attacker.GetPoint(EPoint.SlowPercentage)))
+            {
+                target.Affects.Upsert(new EntityAffect
+                {
+                    AffectType = AffectType.From(EAffectType.Slow),
+                    AffectFlag = EAffect.Slow,
+                    ModifiedPointId = EPoint.MoveSpeed,
+                    ModifiedPointDelta = DefaultMovementDebuffValue,
+                    RemainingDuration = TimeSpan.FromSeconds(DefaultSlowDurationSeconds),
+                    DoNotPersist = true
+                });
+            }
+
+            #endregion
         }
 
         public virtual void Die()

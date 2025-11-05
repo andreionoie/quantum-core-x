@@ -1,5 +1,6 @@
 ﻿using System.Collections.Immutable;
 using QuantumCore.API.Core.Models;
+using QuantumCore.API.Systems.Stats;
 
 namespace QuantumCore.API;
 
@@ -12,4 +13,6 @@ public interface IMonsterManager
 
     MonsterData? GetMonster(uint id);
     ImmutableArray<MonsterData> GetMonsters();
+    
+    StatEngine.BaseValueSupplierFactory BasePointsForMonster(uint id);
 }

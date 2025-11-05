@@ -3,6 +3,7 @@ using QuantumCore.API;
 using QuantumCore.API.Core.Models;
 using QuantumCore.API.Game.Guild;
 using QuantumCore.API.Game.Skills;
+using QuantumCore.API.Game.Types.Skills;
 using QuantumCore.Game.Persistence.Entities;
 using QuantumCore.Game.Persistence.Entities.Guilds;
 
@@ -57,7 +58,7 @@ public static class QueryExtensions
         return query.Select(x => new Skill
         {
             PlayerId = x.PlayerId,
-            SkillId = (ESkillIndexes)x.SkillId,
+            SkillId = (ESkill)x.SkillId,
             MasterType = x.MasterType,
             Level = x.Level,
             NextReadTime = x.NextReadTime,

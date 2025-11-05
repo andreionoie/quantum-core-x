@@ -1,26 +1,26 @@
 using QuantumCore.API.Game;
 using QuantumCore.API.Game.World;
+using QuantumCore.Game.Extensions;
 
-namespace QuantumCore.Game.Commands
+namespace QuantumCore.Game.Commands;
+
+[Command("quit", "Quit the game")]
+[CommandNoPermission]
+public class QuitCommand(IWorld world) : ICommandHandler
 {
-    [Command("quit", "Quit the game")]
-    [CommandNoPermission]
-    public class QuitCommand : ICommandHandler
+    public Task ExecuteAsync(CommandContext context)
     {
-        private readonly IWorld _world;
-
-        public QuitCommand(IWorld world)
-        {
-            _world = world;
-        }
-
-        public async Task ExecuteAsync(CommandContext context)
-        {
-            context.Player.SendChatInfo("End the game. Please wait.");
-            context.Player.SendChatCommand("quit");
-            await context.Player.CalculatePlayedTimeAsync();
-            await _world.DespawnPlayerAsync(context.Player);
-            context.Player.Disconnect();
-        }
+        context.Player.StartCountdownEventCancellable(
+            "End the game. Please wait.",
+            "{0} seconds until quit.",
+            () => Task.Run(async () =>
+            {
+                context.Player.SendChatCommand("quit");
+                await context.Player.CalculatePlayedTimeAsync();
+                await world.DespawnPlayerAsync(context.Player);
+                context.Player.Disconnect();
+            }));
+        
+        return Task.CompletedTask;
     }
 }

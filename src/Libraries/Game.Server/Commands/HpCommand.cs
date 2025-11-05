@@ -29,7 +29,8 @@ public class HpCommand : ICommandHandler<HpOtherOptions>
         }
         else
         {
-            target.AddPoint(EPoints.Hp, context.Arguments.Value);
+            
+            target.SetPoint(EPoint.Hp, context.Arguments.Value);
             target.SendPoints();
         }
 
@@ -39,7 +40,7 @@ public class HpCommand : ICommandHandler<HpOtherOptions>
 
 public class HpOtherOptions
 {
-    [Value(0)] public int Value { get; set; }
+    [Value(0)] public uint Value { get; set; }
 
     [Value(1)] public string? Target { get; set; }
 }

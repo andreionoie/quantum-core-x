@@ -14,7 +14,12 @@ namespace QuantumCore.Core.Utils
 
         public static bool PercentageCheck(long percentage)
         {
-            return GenerateInt32(1, 101) <= percentage;
+            return percentage switch
+            {
+                <= 0 => false,
+                >= 100 => true,
+                _ => GenerateInt32(1, 101) <= percentage
+            };
         }
 
         public static int GenerateInt32(int fromInclusive, int toExclusive)

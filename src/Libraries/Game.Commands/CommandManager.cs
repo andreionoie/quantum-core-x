@@ -43,7 +43,7 @@ internal class CommandManager : ICommandManager, ILoadable
 
     public void Register(string ns, Assembly? assembly = null)
     {
-        _logger.LogDebug("Registring commands from namespace {Namespace}", ns);
+        _logger.LogDebug("Registering commands from namespace {Namespace}", ns);
         if (assembly == null) assembly = Assembly.GetAssembly(typeof(CommandManager))!;
 
         var types = assembly.GetTypes().Where(t => string.Equals(t.Namespace, ns, StringComparison.Ordinal))
@@ -245,7 +245,7 @@ internal class CommandManager : ICommandManager, ILoadable
                                 [parserResult, helpTextFunc, exampleFunc, verbsIndex, maxDisplayWidth])!;
                             var messages = help.ToString().Split(Environment.NewLine)
                                 .Where(x => !string.IsNullOrWhiteSpace(x));
-                            connection.Player.SendChatInfo("Comannd validation failed:");
+                            connection.Player.SendChatInfo("Command validation failed:");
                             foreach (var message in messages)
                             {
                                 connection.Player.SendChatInfo(message);

@@ -29,7 +29,7 @@ public class SpCommand : ICommandHandler<SpOtherOptions>
         }
         else
         {
-            target.AddPoint(EPoints.Sp, context.Arguments.Value);
+            target.SetPoint(EPoint.Sp, context.Arguments.Value);
             target.SendPoints();
         }
 
@@ -39,7 +39,7 @@ public class SpCommand : ICommandHandler<SpOtherOptions>
 
 public class SpOtherOptions
 {
-    [Value(0)] public int Value { get; set; }
+    [Value(0)] public uint Value { get; set; }
 
     [Value(1)] public string? Target { get; set; }
 }

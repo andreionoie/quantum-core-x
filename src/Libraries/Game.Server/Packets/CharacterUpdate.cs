@@ -11,7 +11,7 @@ namespace QuantumCore.Game.Packets
         [Field(2)] public byte MoveSpeed { get; set; }
         [Field(3)] public byte AttackSpeed { get; set; }
         [Field(4)] public byte State { get; set; }
-        [Field(5, ArrayLength = 2)] public uint[] Affects { get; set; } = new uint[2];
+        [Field(5)] public ulong Affects { get; set; }
         [Field(6)] public uint GuildId { get; set; }
         [Field(7)] public short RankPoints { get; set; }
         [Field(8)] public byte PkMode { get; set; }

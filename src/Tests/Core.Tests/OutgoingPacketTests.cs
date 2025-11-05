@@ -49,7 +49,7 @@ public class OutgoingPacketTests
     public void SpawnCharacter()
     {
         var obj = new AutoFaker<SpawnCharacter>()
-            .RuleFor(x => x.Affects, faker => new[] { faker.Random.UInt(), faker.Random.UInt() })
+            .RuleFor(x => x.Affects, faker => faker.Random.ULong())
             .Generate();
         var bytes = _serializer.Serialize(obj);
 
@@ -65,7 +65,7 @@ public class OutgoingPacketTests
                 .Append(obj.MoveSpeed)
                 .Append(obj.AttackSpeed)
                 .Append(obj.State)
-                .Concat(obj.Affects.SelectMany(BitConverter.GetBytes))
+                .Concat(BitConverter.GetBytes(obj.Affects))
         );
     }
 
@@ -222,7 +222,7 @@ public class OutgoingPacketTests
                 {
                     faker.Random.UShort(), faker.Random.UShort(), faker.Random.UShort(), faker.Random.UShort()
                 })
-            .RuleFor(x => x.Affects, faker => new[] { faker.Random.UInt(), faker.Random.UInt() })
+            .RuleFor(x => x.Affects, faker => faker.Random.ULong())
             .Generate();
         var bytes = _serializer.Serialize(obj);
 
@@ -233,7 +233,7 @@ public class OutgoingPacketTests
                 .Append(obj.MoveSpeed)
                 .Append(obj.AttackSpeed)
                 .Append(obj.State)
-                .Concat(obj.Affects.SelectMany(BitConverter.GetBytes))
+                .Concat(BitConverter.GetBytes(obj.Affects))
                 .Concat(BitConverter.GetBytes(obj.GuildId))
                 .Concat(BitConverter.GetBytes(obj.RankPoints))
                 .Append(obj.PkMode)
@@ -265,8 +265,8 @@ public class OutgoingPacketTests
                 .Concat(BitConverter.GetBytes(obj.ItemId))
                 .Append(obj.Count)
                 .Concat(BitConverter.GetBytes(obj.Flags))
-                .Concat(BitConverter.GetBytes(obj.AnitFlags))
-                .Concat(BitConverter.GetBytes(obj.Highlight))
+                .Concat(BitConverter.GetBytes(obj.AntiFlags))
+                .Append(obj.Highlight)
                 .Concat(obj.Sockets.SelectMany(BitConverter.GetBytes))
                 .Concat(obj.Bonuses.SelectMany(bonus =>
                 {

@@ -33,7 +33,10 @@ public class AttackHandler : IGamePacketHandler<Attack>
         _logger.LogDebug("Attack from {Attacker} with type {AttackType} target {TargetId}", attacker.Name,
             ctx.Packet.AttackType, ctx.Packet.Vid);
 
-        attacker.Attack(entity);
+        // Cancel logout/phase_select
+        attacker.CancelCountdownEvent();
+
+        attacker.TryAttack(entity);
         return Task.CompletedTask;
     }
 }

@@ -96,7 +96,85 @@ internal class GeneratorContext
             }
         }
 
+        ValidateVariableLengthPacket(finalArr);
+
         return finalArr.OrderBy(x => x.Order).ToImmutableArray();
+    }
+
+    private static void ValidateVariableLengthPacket(List<FieldData> finalArr)
+    {
+        var packetSizeFields = finalArr.Where(f => f.IsPacketSize).ToList();
+        if (packetSizeFields.Count > 1)
+        {
+            throw new DiagnosticException("QCX000006",
+                "Multiple [PacketSize] fields found. Only one is allowed per packet.",
+                packetSizeFields[1].SyntaxNode.GetLocation());
+        }
+
+        var varLenFields = finalArr.Where(f => f.IsVarLen).ToList();
+        if (varLenFields.Count > 1)
+        {
+            throw new DiagnosticException("QCX000007",
+                "Multiple [VarLen] fields found. Only one tail vector is allowed per packet.",
+                varLenFields[1].SyntaxNode.GetLocation());
+        }
+
+        if (packetSizeFields.Count != 1 && varLenFields.Count != 1)
+        {
+            return;
+        }
+
+        if (packetSizeFields.Count != 1 || varLenFields.Count != 1)
+        {
+            throw new DiagnosticException("QCX000008",
+                "[PacketSize] and [VarLen] must be used together on sized variable-length packets.",
+                (packetSizeFields.FirstOrDefault() ?? varLenFields.First()).SyntaxNode.GetLocation());
+        }
+
+        var sizeField = packetSizeFields[0];
+            
+        // support only the unsigned 16bit type for the size
+        if (sizeField.SemanticType.SpecialType != GeneratorConstants.VarLenSupportedLengthType)
+        {
+            throw new DiagnosticException("QCX000009",
+                "[PacketSize] field must be of type ushort.", sizeField.SyntaxNode.GetLocation());
+        }
+
+        var sizeIndex = finalArr.FindIndex(f => f == sizeField);
+        if (sizeIndex != 0)
+        {
+            throw new DiagnosticException("QCX000010",
+                "[PacketSize] field must be declared immediately after the header (first field).",
+                sizeField.SyntaxNode.GetLocation());
+        }
+
+        var varLenField = varLenFields[0];
+        if (!varLenField.IsArray)
+        {
+            throw new DiagnosticException("QCX000011",
+                "[VarLen] must be declared on an array field.", varLenField.SyntaxNode.GetLocation());
+        }
+
+        var varLenIndex = finalArr.FindIndex(f => f == varLenField);
+        if (varLenIndex != finalArr.Count - 1)
+        {
+            throw new DiagnosticException("QCX000012",
+                "[VarLen] field must be the last field of the packet.", varLenField.SyntaxNode.GetLocation());
+        }
+
+        // enforce adjacency — vector immediately follows size field
+        if (varLenIndex != sizeIndex + 1)
+        {
+            throw new DiagnosticException("QCX000013",
+                "[VarLen] must be declared immediately after the [PacketSize] field.",
+                varLenField.SyntaxNode.GetLocation());
+        }
+
+        if (varLenField.ElementSize <= 0)
+        {
+            throw new DiagnosticException("QCX000014",
+                "Element type of [VarLen] must have a fixed static size.", varLenField.SyntaxNode.GetLocation());
+        }
     }
 
     private int? GetConstantValue(TypeDeclarationSyntax type, ExpressionSyntax expression)
@@ -192,8 +270,33 @@ internal class GeneratorContext
             elementSize = stringLength.Value;
         }
 
+        var isPacketSize = false;
+        var isVarLen = false;
+        if (name.Parent is PropertyDeclarationSyntax declaringProperty)
+        {
+            var model = Type.SemanticModel.SyntaxTree == declaringProperty.SyntaxTree
+                ? Type.SemanticModel
+                : Type.SemanticModel.Compilation.GetSemanticModel(declaringProperty.SyntaxTree);
+            if (model.GetDeclaredSymbol(declaringProperty) is IPropertySymbol propSym)
+            {
+                foreach (var attr in propSym.GetAttributes())
+                {
+                    if (attr.AttributeClass?.ToDisplayString() == GeneratorConstants.FIELDATTRIBUTE_FULLNAME)
+                    {
+                        foreach (var kv in attr.NamedArguments)
+                        {
+                            if (kv is { Key: GeneratorConstants.FIELDATTRIBUTE_PACKETSIZEARG, Value.Value: true })
+                                isPacketSize = true;
+                            else if (kv is { Key: GeneratorConstants.FIELDATTRIBUTE_VARLENARG, Value.Value: true })
+                                isVarLen = true;
+                        }
+                    }
+                }
+            }
+        }
+
         if ((fieldType.Name == "String" && stringLength is null && sizeFieldName is null) ||
-            (type is ArrayTypeSyntax && sizeFieldName is null && arrayLength is null))
+            (type is ArrayTypeSyntax && sizeFieldName is null && arrayLength is null && !isVarLen))
         {
             throw new DiagnosticException("QCX000002",
                 "String or array must have a defined a static length either via FieldAttribute or an array constructor as default value. Dynamic fields must have a field that refers to it's size like \"public uint Size => Message.Length;\"",
@@ -217,7 +320,9 @@ internal class GeneratorContext
             IsRecordParameter = isRecordParameter,
             IsReadonly = isReadonly,
             Order = order,
-            SizeFieldName = sizeFieldName
+            SizeFieldName = sizeFieldName,
+            IsPacketSize = isPacketSize,
+            IsVarLen = isVarLen
         };
     }
 

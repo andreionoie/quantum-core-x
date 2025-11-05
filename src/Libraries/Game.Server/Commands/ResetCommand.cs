@@ -1,4 +1,5 @@
 ﻿using QuantumCore.API.Game;
+using QuantumCore.API.Game.Types;
 
 namespace QuantumCore.Game.Commands;
 
@@ -8,8 +9,8 @@ public class ResetCommand : ICommandHandler
 {
     public Task ExecuteAsync(CommandContext context)
     {
-        context.Player.Health = context.Player.Player.MaxHp;
-        context.Player.Mana = context.Player.Player.MaxSp;
+        context.Player.Health = context.Player.GetPoint(EPoint.MaxHp);
+        context.Player.Mana = context.Player.GetPoint(EPoint.MaxSp);
         context.Player.SendPoints();
 
         return Task.CompletedTask;

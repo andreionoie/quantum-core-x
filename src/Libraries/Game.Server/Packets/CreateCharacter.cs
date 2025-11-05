@@ -1,3 +1,4 @@
+using QuantumCore.Game.Constants;
 using QuantumCore.Networking;
 
 namespace QuantumCore.Game.Packets

@@ -91,5 +91,11 @@ namespace QuantumCore.Game
         {
             return Server.ServerTime;
         }
+
+        public override string ToString()
+        {
+            return $"{RemoteEndpoint} {nameof(Username)}: {Username}, " +
+                $"{nameof(Phase)}: {Phase}, {nameof(Player)}: {Player?.ToString() ?? "(none)"}";
+        }
     }
 }

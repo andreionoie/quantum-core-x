@@ -8,7 +8,9 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
 using QuantumCore.API;
 using QuantumCore.API.Core.Models;
-using QuantumCore.API.Game.Skills;
+using QuantumCore.API.Game.Types;
+using QuantumCore.API.Game.Types.Skills;
+using QuantumCore.API.Systems.Formulas;
 using QuantumCore.Core.Utils;
 using QuantumCore.Game.Drops;
 using QuantumCore.Game.World;
@@ -87,7 +89,7 @@ public partial class ParserService : IParserService
 
             try
             {
-                if (!Enum.TryParse<ESkillIndexes>(split[0], true, out var id))
+                if (!(uint.TryParse(split[0], out var idRaw) && EnumUtils<ESkill>.TryCast(idRaw, out var id)))
                 {
                     _logger.LogWarning("Failed to parse Skill with Id({Id}) from line: {Line}", split[0], line);
                     continue;
@@ -97,33 +99,39 @@ public partial class ParserService : IParserService
                 {
                     Id = id,
                     Name = split[1],
-                    Type = (ESkillCategoryType)short.Parse(split[2]),
+                    Type = EnumUtils<ESkillCategoryType>.CheckedCast(uint.Parse(split[2])),
                     LevelStep = short.Parse(split[3]),
                     MaxLevel = short.Parse(split[4]),
                     LevelLimit = short.Parse(split[5]),
-                    PointOn = split[6],
-                    PointPoly = split[7],
-                    SPCostPoly = split[8],
-                    DurationPoly = split[9],
-                    DurationSPCostPoly = split[10],
-                    CooldownPoly = split[11],
-                    MasterBonusPoly = split[12],
-                    AttackGradePoly = split[13],
-                    Flag = ExtractSkillFlags(split[14]),
-                    AffectFlag = ExtractAffectFlags(split[15]),
-                    PointOn2 = split[16],
-                    PointPoly2 = split[17],
-                    DurationPoly2 = split[18],
-                    AffectFlag2 = ExtractAffectFlags(split[19]),
+                    PointOn = ExtractPoint(split[6]),
+                    PointFormula = SkillFormula.ParseRawExpression(split[7]),
+                    SpCostFormula = SkillFormula.ParseRawExpression(split[8]),
+                    DurationFormula = SkillFormula.ParseRawExpression(split[9]),
+                    DurationSpCostFormula = SkillFormula.ParseRawExpression(split[10]),
+                    CooldownFormula = SkillFormula.ParseRawExpression(split[11]),
+                    MasterBonusFormula = SkillFormula.ParseRawExpression(split[12]),
+                    AttackGradeFormula = SkillFormula.ParseRawExpression(split[13]),
+                    Flags = ExtractSkillFlags(split[14]),
+                    AffectFlag = ExtractAffect(split[15]),
+                    PointOn2 = ExtractPoint(split[16]),
+                    PointFormula2 = SkillFormula.ParseRawExpression(split[17]),
+                    DurationFormula2 = SkillFormula.ParseRawExpression(split[18]),
+                    AffectFlag2 = ExtractAffect(split[19]),
                     PrerequisiteSkillVnum = int.Parse(split[20]),
                     PrerequisiteSkillLevel = int.Parse(split[21]),
                     SkillType =
-                        Enum.TryParse<ESkillType>(split[22], true, out var result) ? result : ESkillType.Normal,
+                        Enums.TryParse<ESkillType>(split[22], true, out var result, EnumFormat.EnumMemberValue) ? result : ESkillType.Normal,
                     MaxHit = short.Parse(split[23]),
-                    SplashAroundDamageAdjustPoly = split[24],
+                    SplashAroundDamageAdjustFormula = SkillFormula.ParseRawExpression(split[24]),
                     TargetRange = int.Parse(split[25]),
                     SplashRange = uint.Parse(split[26])
                 };
+
+                var primaryRequired = CollectFormulaVariables(data.PointFormula, data.DurationFormula, data.DurationSpCostFormula);
+                var secondaryRequired = CollectFormulaVariables(data.PointFormula2, data.DurationFormula2);
+
+                data.AllRequiredVariables = secondaryRequired.IsDefaultOrEmpty ? primaryRequired
+                    : [..primaryRequired.Concat(secondaryRequired).Distinct()];
 
                 list.Add(data);
             }
@@ -193,6 +201,22 @@ public partial class ParserService : IParserService
         }
 
         return groups;
+    }
+
+    private static ImmutableArray<EFormulaVariable> CollectFormulaVariables(params SkillFormula[] formulas)
+    {
+        var set = new HashSet<EFormulaVariable>();
+        foreach (var formula in formulas)
+        {
+            foreach (var variable in formula.RequiredVariables)
+            {
+                set.Add(variable);
+            }
+        }
+
+        return set.Count == 0
+            ? ImmutableArray<EFormulaVariable>.Empty
+            : [..set];
     }
 
     public MonsterDropContainer? ParseMobGroup(DataFileGroup group, IItemManager itemManager)
@@ -372,9 +396,9 @@ public partial class ParserService : IParserService
         throw new ArgumentOutOfRangeException(nameof(str), $"Don't know how to parse \"{str}\" to TimeSpan");
     }
 
-    private static ESkillFlag ExtractSkillFlags(string value)
+    private ESkillFlags ExtractSkillFlags(string value)
     {
-        ESkillFlag result = 0;
+        ESkillFlags result = 0;
 
         if (string.IsNullOrWhiteSpace(value))
         {
@@ -385,34 +409,56 @@ public partial class ParserService : IParserService
 
         foreach (var flag in flags)
         {
-            if (!EnumUtils.TryParseEnum<ESkillFlag>(flag, out var parsed)) continue;
-            result |= parsed;
+            if (Enums.TryParse<ESkillFlags>(flag, true, out var parsedFlag, EnumFormat.EnumMemberValue))
+            {
+                result |= parsedFlag;
+                continue;
+            }
+
+            _logger.LogWarning("Unknown skill flag '{FlagIdentifier}'", flag);
         }
 
         return result;
     }
 
-    private static ESkillAffectFlag ExtractAffectFlags(string value)
+    private EPoint ExtractPoint(string value)
     {
-        ESkillAffectFlag result = 0;
-
         if (string.IsNullOrWhiteSpace(value))
         {
-            return result;
+            return EPoint.None;
         }
-
-        var flags = value.Split(',');
-
-        foreach (var flag in flags)
+        
+        if (!Enums.TryParse<EPoint>(value, true, out var parsedEnum, EnumFormat.EnumMemberValue))
         {
-            if (!EnumUtils.TryParseEnum<ESkillAffectFlag>(flag, out var parsed)) continue;
-            result |= parsed;
+            _logger.LogWarning("Unknown skilltable.txt point identifier '{PointIdentifier}'", value);
+            return EPoint.None;
         }
 
-        return result;
+        return parsedEnum;
     }
 
-    private static void ParseCommonDropAndAdd(ReadOnlySpan<char> line, ICollection<CommonDropEntry> list)
+    private EAffect ExtractAffect(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return EAffect.None;
+        }
+
+        if (!uint.TryParse(value, out var affectIdx) || affectIdx == 0)
+        {
+            return EAffect.None;
+        }
+
+        if (!EnumUtils<EAffect>.TryCast(affectIdx + 1, out var affect))
+        {
+            _logger.LogWarning("Unknown skilltable.txt affect identifier '{AffectIdentifier}'", affectIdx);
+            return EAffect.None;
+        }
+
+        return affect;
+    }
+
+    private static void ParseCommonDropAndAdd(ReadOnlySpan<char> line, List<CommonDropEntry> list)
     {
         var trimmedLine = line.Trim();
         if (trimmedLine.StartsWith("PAWN")) return; // skip if first line - headers
