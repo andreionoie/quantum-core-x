@@ -13,12 +13,6 @@ public interface IAffectsController
     bool Remove(params EntityAffect[] affects);
     bool Remove(AffectType type, EPoint applyOn);
     bool RemoveAllOfType(AffectType type);
-    void Clear();
-
-    EAffectFlags GetActiveFlags()
-    {
-        // slight optimization: cache this value on Active affects updates
-        return Active.Aggregate(EAffectFlags.None,
-            (flagsAccum, activeAffect) => flagsAccum | activeAffect.AffectFlag.ToFlag());
-    }
+    void Clear(bool preserveNoClearOnDeath = false);
+    EAffectFlags GetActiveFlags();
 }

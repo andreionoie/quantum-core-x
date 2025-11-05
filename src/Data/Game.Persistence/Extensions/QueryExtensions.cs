@@ -3,7 +3,9 @@ using QuantumCore.API;
 using QuantumCore.API.Core.Models;
 using QuantumCore.API.Game.Guild;
 using QuantumCore.API.Game.Skills;
+using QuantumCore.API.Game.Types;
 using QuantumCore.API.Game.Types.Skills;
+using QuantumCore.API.Systems.Affects;
 using QuantumCore.Game.Persistence.Entities;
 using QuantumCore.Game.Persistence.Entities.Guilds;
 
@@ -104,6 +106,25 @@ public static class QueryExtensions
             Window = x.Window,
             Position = x.Position,
             Count = x.Count
+        });
+    }
+
+    public static IQueryable<EntityAffect> SelectEntityAffect(this IQueryable<PlayerAffect> query)
+    {
+        return query.Select(x => new EntityAffect
+        {
+            AffectType = x.IsSkill
+                ? AffectType.FromSkill((ESkill)x.AffectTypeValue)
+                : AffectType.From((EAffectType)x.AffectTypeValue),
+            AffectFlag = (EAffect)x.AffectFlag,
+            ModifiedPointId = (EPoint)x.ModifiedPointId,
+            ModifiedPointDelta = x.ModifiedPointDelta,
+            SpCostPerSecond = x.SpCostPerSecond,
+            DoNotPersist = x.DoNotPersist,
+            DoNotClearOnDeath = x.DoNotClearOnDeath,
+            RemainingDuration = TimeSpan.FromMilliseconds(x.RemainingDurationMs),
+            FractionalSpCostAccumulator = x.FractionalSpCostAccumulator,
+            SourceAttackerId = x.SourceAttackerId
         });
     }
 }

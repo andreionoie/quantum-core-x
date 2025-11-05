@@ -23,6 +23,7 @@ public sealed class EntityAffect : IStatEngine.IModifierSource
     private readonly int _spCostPerSecond; // used to help with non-negative validation on init
     
     public bool DoNotPersist { get; init; }
+    public bool DoNotClearOnDeath { get; init; }
 
     public TimeSpan RemainingDuration { get; set; }
     public double FractionalSpCostAccumulator { get; set; }

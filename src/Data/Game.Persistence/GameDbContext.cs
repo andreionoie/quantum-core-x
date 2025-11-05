@@ -9,6 +9,7 @@ public abstract class GameDbContext : DbContext
     public DbSet<Player> Players { get; set; } = null!;
     public DbSet<PlayerSkill> PlayerSkills { get; set; } = null!;
     public DbSet<PlayerQuickSlot> PlayerQuickSlots { get; set; } = null!;
+    public DbSet<PlayerAffect> PlayerAffects { get; set; } = null!;
     public DbSet<DeletedPlayer> DeletedPlayers { get; set; } = null!;
     public DbSet<Item> Items { get; set; } = null!;
     public DbSet<PermAuth> Permissions { get; set; } = null!;
@@ -25,6 +26,7 @@ public abstract class GameDbContext : DbContext
         Player.Configure(modelBuilder.Entity<Player>(), Database);
         PlayerSkill.Configure(modelBuilder.Entity<PlayerSkill>(), Database);
         PlayerQuickSlot.Configure(modelBuilder.Entity<PlayerQuickSlot>(), Database);
+        PlayerAffect.Configure(modelBuilder.Entity<PlayerAffect>(), Database);
         Item.Configure(modelBuilder.Entity<Item>(), Database);
         PermAuth.Configure(modelBuilder.Entity<PermAuth>(), Database);
         PermGroup.Configure(modelBuilder.Entity<PermGroup>(), Database);

@@ -10,6 +10,7 @@ public sealed class ModifiableStat(EPoint point, ModifiableStat.BaseValueSupplie
 
     public delegate int BaseValueSupplier();
 
+    private readonly object _lock = new();
     private EPoint Point { get; } = point;
     private int? _cached;
     private readonly Dictionary<string, List<FlatStatModifier>> _modifiersBySource = new();
@@ -38,32 +39,38 @@ public sealed class ModifiableStat(EPoint point, ModifiableStat.BaseValueSupplie
     {
         Debug.Assert(delta != 0);
 
-        if (!_modifiersBySource.TryGetValue(source.ModifierKey, out var modifiers))
+        lock (_lock)
         {
-            modifiers = [];
-            _modifiersBySource[source.ModifierKey] = modifiers;
-        }
+            if (!_modifiersBySource.TryGetValue(source.ModifierKey, out var modifiers))
+            {
+                modifiers = [];
+                _modifiersBySource[source.ModifierKey] = modifiers;
+            }
 
-        modifiers.Add(new FlatStatModifier
-        {
-            SourceKey = source.ModifierKey,
-            Target = Point,
-            Delta = delta
-        });
-        Invalidate();
+            modifiers.Add(new FlatStatModifier
+            {
+                SourceKey = source.ModifierKey,
+                Target = Point,
+                Delta = delta
+            });
+            Invalidate();
+        }
         OnChanged?.Invoke(Point);
     }
 
     public bool RemoveModifier(IStatEngine.IModifierSource source)
     {
-        if (_modifiersBySource.Remove(source.ModifierKey))
+        lock (_lock)
         {
-            Invalidate();
-            OnChanged?.Invoke(Point);
-            return true;
-        }
+            if (_modifiersBySource.Remove(source.ModifierKey))
+            {
+                Invalidate();
+                OnChanged?.Invoke(Point);
+                return true;
+            }
 
-        return false;
+            return false;
+        }
     }
 
     public void Invalidate()
@@ -73,39 +80,45 @@ public sealed class ModifiableStat(EPoint point, ModifiableStat.BaseValueSupplie
 
     public int ComputeValue()
     {
-        if (_cached.HasValue)
+        lock (_lock)
         {
+            if (_cached.HasValue)
+            {
+                return _cached.Value;
+            }
+
+            var baseValue = baseValueSupplier();
+            var combinedFlatModifiers = 0;
+            foreach (var modifierList in _modifiersBySource.Values)
+            {
+                foreach (var m in modifierList)
+                {
+                    combinedFlatModifiers += m.Delta;
+                }
+            }
+
+            _cached = baseValue + combinedFlatModifiers;
             return _cached.Value;
         }
-
-        var baseValue = baseValueSupplier();
-        var combinedFlatModifiers = 0;
-        foreach (var modifierList in _modifiersBySource.Values)
-        {
-            foreach (var m in modifierList)
-            {
-                combinedFlatModifiers += m.Delta;
-            }
-        }
-
-        _cached = baseValue + combinedFlatModifiers;
-        return _cached.Value;
     }
 
     public override string ToString()
     {
-        var sb = new StringBuilder()
-            .Append($"cached = {(_cached.HasValue ? _cached.Value : "no")}");
-
-        foreach (var modifierList in _modifiersBySource.Values)
+        lock (_lock)
         {
-            foreach (var modif in modifierList)
-            {
-                sb.Append(Environment.NewLine);
-                sb.Append($"        * {modif}");
-            }
-        }
+            var sb = new StringBuilder()
+                .Append($"cached = {(_cached.HasValue ? _cached.Value : "no")}");
 
-        return sb.ToString();
+            foreach (var modifierList in _modifiersBySource.Values)
+            {
+                foreach (var modif in modifierList)
+                {
+                    sb.Append(Environment.NewLine);
+                    sb.Append($"        * {modif}");
+                }
+            }
+
+            return sb.ToString();
+        }
     }
 }

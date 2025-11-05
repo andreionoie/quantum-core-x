@@ -216,7 +216,7 @@ namespace QuantumCore.Game.World.Entities
             await QuickSlotBar.Load();
             await LoadPermGroups();
             await Skills.LoadAsync();
-            // TODO: load affects from DB
+            await LoadAffectsAsync();
             var guildManager = _scope.ServiceProvider.GetRequiredService<IGuildManager>();
             Guild = await guildManager.GetGuildForPlayerAsync(Player.Id);
             Player.GuildId = Guild?.Id;
@@ -240,6 +240,23 @@ namespace QuantumCore.Game.World.Entities
             {
                 Groups.Add(group);
             }
+        }
+
+        private async Task LoadAffectsAsync()
+        {
+            var affectRepository = _scope.ServiceProvider.GetRequiredService<IPlayerAffectsRepository>();
+            var affects = await affectRepository.GetPlayerAffectsAsync(Player.Id);
+
+            foreach (var affect in affects)
+            {
+                Affects.Upsert(affect);
+            }
+        }
+
+        private async Task PersistAffectsAsync()
+        {
+            var affectRepository = _scope.ServiceProvider.GetRequiredService<IDbPlayerAffectsRepository>();
+            await affectRepository.SavePlayerAffectsAsync(Player.Id, Affects.Active);
         }
 
         public T? GetQuestInstance<T>() where T : class, IQuest
@@ -314,7 +331,7 @@ namespace QuantumCore.Game.World.Entities
 
             base.Die();
 
-            Affects.Clear();
+            Affects.Clear(preserveNoClearOnDeath: true);
 
             var dead = new CharacterDead {Vid = Vid};
             foreach (var entity in NearbyEntities)
@@ -921,8 +938,8 @@ namespace QuantumCore.Game.World.Entities
             Player.Mana = Mana;
             Player.BodyPart = Inventory.EquipmentWindow.GetBodyPartId();
             Player.HairPart = Inventory.EquipmentWindow.GetHairPartId(_itemManager);
-            // TODO: persist affects
 
+            await PersistAffectsAsync();
             await Skills.PersistAsync();
 
             var playerManager = _scope.ServiceProvider.GetRequiredService<IPlayerManager>();

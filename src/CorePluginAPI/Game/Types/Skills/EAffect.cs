@@ -11,7 +11,10 @@ public enum EAffect
     Poison = 4,
     Slow = 5,
     Stun = 6,
-    
+
+    DungeonReady = 7,
+    DungeonUnique = 8,
+
     BuildingConstructionSmall = 9,
     BuildingConstructionLarge = 10,
     BuildingUpgrade = 11,
