@@ -22,7 +22,7 @@ public static class EntityEventExtensions
         entity.Events.Schedule(
             EntityEventType.KnockoutToDeath,
             () => entity.Die(),
-            SchedulingConstants.KnockoutToDeathDelaySeconds * 1000
+            TimeSpan.FromSeconds(SchedulingConstants.KnockoutToDeathDelaySeconds)
         );
     }
 
@@ -51,7 +51,7 @@ public static class EntityEventExtensions
         player.Events.Schedule(
             EntityEventType.AutoRespawnInTown,
             () => player.Respawn(true),
-            SchedulingConstants.PlayerAutoRespawnDelaySeconds * 1000
+            TimeSpan.FromSeconds(SchedulingConstants.PlayerAutoRespawnDelaySeconds)
         );
     }
 
@@ -82,14 +82,14 @@ public static class EntityEventExtensions
                 if (remaining <= 0)
                 {
                     player.Connection.Close();
-                    return 0; // Stop
+                    return TimeSpan.Zero; // Stop
                 }
 
                 player.SendChatInfo($"{remaining} seconds remaining...");
                 remaining--;
-                return 1000; // Continue every second
+                return TimeSpan.FromSeconds(1); // Continue every second
             },
-            1000
+            TimeSpan.FromSeconds(1)
         );
     }
 
@@ -109,14 +109,14 @@ public static class EntityEventExtensions
                 if (remaining <= 0)
                 {
                     player.SendChatCommand("quit");
-                    return 0;
+                    return TimeSpan.Zero; // Stop
                 }
 
                 player.SendChatInfo($"{remaining} seconds remaining...");
                 remaining--;
-                return 1000;
+                return TimeSpan.FromSeconds(1); // Continue
             },
-            1000
+            TimeSpan.FromSeconds(1)
         );
     }
 
@@ -150,7 +150,7 @@ public static class EntityEventExtensions
         entity.Events.Schedule(
             EntityEventType.StunDuration,
             () => { /* Stun ends naturally */ },
-            durationSeconds * 1000
+            TimeSpan.FromSeconds(durationSeconds)
         );
     }
 

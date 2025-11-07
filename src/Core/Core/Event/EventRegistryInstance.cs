@@ -14,8 +14,8 @@ public class EventRegistry
     /// </summary>
     /// <param name="key">Unique key for this event (typically an enum value)</param>
     /// <param name="callback">Action to execute when event fires</param>
-    /// <param name="delayMs">Delay in milliseconds</param>
-    public void Schedule(object key, Action callback, int delayMs)
+    /// <param name="delay">Delay before event fires</param>
+    public void Schedule(object key, Action callback, TimeSpan delay)
     {
         Cancel(key); // Auto-cancel existing
 
@@ -24,27 +24,29 @@ public class EventRegistry
             callback();
             _events.Remove(key); // Self-cleanup
             return 0; // One-shot
-        }, delayMs);
+        }, (int)delay.TotalMilliseconds);
 
         _events[key] = eventId;
     }
 
     /// <summary>
     /// Schedule a repeating event by key.
+    /// Callback returns the next delay as TimeSpan, or TimeSpan.Zero to stop.
     /// </summary>
-    public void ScheduleRepeating(object key, Func<int> callback, int delayMs)
+    public void ScheduleRepeating(object key, Func<TimeSpan> callback, TimeSpan initialDelay)
     {
         Cancel(key);
 
         var eventId = EventSystem.EnqueueEvent(() =>
         {
             var nextDelay = callback();
-            if (nextDelay == 0)
+            if (nextDelay == TimeSpan.Zero)
             {
                 _events.Remove(key);
+                return 0; // Stop
             }
-            return nextDelay;
-        }, delayMs);
+            return (int)nextDelay.TotalMilliseconds;
+        }, (int)initialDelay.TotalMilliseconds);
 
         _events[key] = eventId;
     }

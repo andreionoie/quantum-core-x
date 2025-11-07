@@ -15,7 +15,7 @@ public static class ItemEventExtensions
     /// After delay, item becomes public and anyone can pick it up.
     /// Default: 30 seconds.
     /// </summary>
-    public static void ScheduleOwnershipExpiry(this GroundItem item, int seconds = 30)
+    public static void ScheduleOwnershipExpiry(this GroundItem item, TimeSpan? delay = null)
     {
         item.Events.Schedule(
             ItemEventType.OwnershipExpiry,
@@ -28,20 +28,20 @@ public static class ItemEventExtensions
                     Player = "" // Empty = public
                 });
             },
-            seconds * 1000
+            delay ?? TimeSpan.FromSeconds(30)
         );
     }
 
     /// <summary>
     /// Schedule item disappear from ground.
-    /// Default: 5 minutes (300 seconds).
+    /// Default: 5 minutes.
     /// </summary>
-    public static void ScheduleItemDisappear(this GroundItem item, int seconds = 300)
+    public static void ScheduleItemDisappear(this GroundItem item, TimeSpan? delay = null)
     {
         item.Events.Schedule(
             ItemEventType.ItemDisappear,
             () => item.Map?.DespawnEntity(item),
-            seconds * 1000
+            delay ?? TimeSpan.FromMinutes(5)
         );
     }
 
