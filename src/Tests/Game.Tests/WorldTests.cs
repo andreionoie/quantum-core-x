@@ -8,6 +8,7 @@ using NSubstitute;
 using QuantumCore;
 using QuantumCore.API;
 using QuantumCore.API.Core.Models;
+using QuantumCore.API.Core.Time;
 using QuantumCore.API.Game.Types.Monsters;
 using QuantumCore.API.Game.Types.Entities;
 using QuantumCore.API.Game.Types.Players;
@@ -19,6 +20,7 @@ using QuantumCore.Game.Extensions;
 using QuantumCore.Game.Services;
 using QuantumCore.Game.World;
 using QuantumCore.Game.World.Entities;
+using QuantumCore.Core.Time;
 using Weikio.PluginFramework.Catalogs;
 
 namespace Game.Tests;
@@ -27,6 +29,7 @@ public class WorldTests
 {
     private World _world = null!;
     private readonly PlayerEntity _playerEntity;
+    private readonly ManualTimeProvider _timeProvider = new();
 
     public WorldTests()
     {
@@ -106,6 +109,7 @@ public class WorldTests
                 ]);
                 return mock;
             }, ServiceLifetime.Singleton))
+            .Replace(new ServiceDescriptor(typeof(ITimeProvider), _ => _timeProvider, ServiceLifetime.Singleton))
             .AddSingleton(Substitute.For<IFileProvider>())
             .BuildServiceProvider();
         _world = ActivatorUtilities.CreateInstance<World>(services);
@@ -121,20 +125,27 @@ public class WorldTests
         };
         _playerEntity = ActivatorUtilities.CreateInstance<PlayerEntity>(services, _world, playerData, conn);
         _world.SpawnEntity(_playerEntity);
-        _world.Update(0.2); // spawn all entities
+        _world.Update(Tick(0.2)); // spawn all entities
     }
 
     [Fact]
     public void World_Update()
     {
-        _world.Update(0.2);
+        _world.Update(Tick(0.2));
         Assert.True(true);
     }
 
     [Fact]
     public void Player_Update()
     {
-        _playerEntity.Update(1);
+        _playerEntity.Update(Tick(1));
         Assert.True(true);
+    }
+
+    private TickContext Tick(double elapsedMilliseconds)
+    {
+        var delta = TimeSpan.FromMilliseconds(elapsedMilliseconds);
+        _timeProvider.Advance(delta);
+        return new TickContext(delta, _timeProvider.Now);
     }
 }
