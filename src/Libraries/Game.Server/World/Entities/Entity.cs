@@ -1,4 +1,5 @@
 ﻿using QuantumCore.API;
+using QuantumCore.API.Core.Time;
 using QuantumCore.API.Core.Utils;
 using QuantumCore.API.Game.Types;
 using QuantumCore.API.Game.Types.Combat;
@@ -66,7 +67,7 @@ public abstract class Entity : IEntity
     public IQuadTree? LastQuadTree { get; set; }
 
     // Movement related
-    public long MovementStart { get; private set; }
+    public ServerTimestamp MovementStart { get; private set; }
     public int TargetPositionX { get; private set; }
     public int StartPositionX { get; private set; }
     public int TargetPositionY { get; private set; }
@@ -98,12 +99,12 @@ public abstract class Entity : IEntity
     public abstract void ShowEntity(IConnection connection);
     public abstract void HideEntity(IConnection connection);
 
-    public virtual void Update(double elapsedTime)
+    public virtual void Update(in TickContext ctx)
     {
         if (State == EEntityState.MOVING)
         {
-            var elapsed = GameServer.Instance.ServerTime - MovementStart;
-            var rate = MovementDuration == 0 ? 1 : elapsed / (float)MovementDuration;
+            var elapsed = ctx.Now.Since(MovementStart);
+            var rate = MovementDuration == 0 ? 1 : elapsed.TotalMilliseconds / (float)MovementDuration;
             if (rate > 1) rate = 1;
 
             var x = (int)((TargetPositionX - StartPositionX) * rate + StartPositionX);
